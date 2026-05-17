@@ -1,0 +1,15 @@
+FROM python:3.11-slim
+
+RUN pip install flask
+
+# HÄRTUNG: Nicht-Root-Benutzer erstellen
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+
+WORKDIR /app
+COPY app_hardened.py app.py
+
+# HÄRTUNG: Als normaler Benutzer ausführen
+USER appuser
+
+EXPOSE 5000
+CMD ["python", "app.py"]
