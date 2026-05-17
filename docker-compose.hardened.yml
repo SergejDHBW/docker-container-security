@@ -1,0 +1,52 @@
+version: "3.8"
+
+# =============================================================
+#  GEHÄRTETE VERSION - Sicherheitsmaßnahmen aktiv
+# =============================================================
+
+services:
+  # --- Webapplikation (Kundenportal) ---
+  webapp:
+    build:
+      context: ./webapp
+      dockerfile: Dockerfile.hardened
+    ports:
+      - "5001:5000"
+    # HÄRTUNG 1: Kein privileged-Flag
+    # HÄRTUNG 2: Läuft als non-root (USER im Dockerfile)
+    # HÄRTUNG 3: Capabilities einschränken
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # HÄRTUNG 4: Read-only Dateisystem
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - frontend              # HÄRTUNG 5: Nur im Frontend-Netz
+    # Kein Zugriff auf backend-Netz!
+
+  # --- Datenbank ---
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: "aX9#kL2$mP7!vB4q"   # HÄRTUNG 6: Starkes Passwort
+      MYSQL_DATABASE: kundenportal
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - backend               # Nur im Backend-Netz
+
+  # --- Interner Admin-Service ---
+  admin:
+    build: ./admin-service
+    networks:
+      - backend               # Nur im Backend-Netz
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    internal: true             # HÄRTUNG 7: Backend-Netz ist isoliert

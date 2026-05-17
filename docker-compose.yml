@@ -1,0 +1,42 @@
+version: "3.8"
+
+# =============================================================
+#  VULNERABLE VERSION - Nur für Demonstrationszwecke!
+#  Dieses Setup enthält absichtliche Schwachstellen.
+# =============================================================
+
+services:
+  # --- Webapplikation (Kundenportal) ---
+  webapp:
+    build: ./webapp
+    ports:
+      - "5001:5000"
+    privileged: true              # SCHWACHSTELLE 1: Privilegierter Modus
+    # Kein "user:" -> läuft als root  # SCHWACHSTELLE 2: Root-User
+    networks:
+      - frontend
+      - backend                    # SCHWACHSTELLE 3: Webapp hat Zugriff auf Backend-Netz
+    depends_on:
+      - db
+
+  # --- Datenbank ---
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root    # SCHWACHSTELLE 4: Schwaches Passwort
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - backend
+
+  # --- Interner Admin-Service ---
+  admin:
+    build: ./admin-service
+    networks:
+      - backend                    # Sollte nur intern erreichbar sein
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
