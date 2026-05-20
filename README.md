@@ -274,22 +274,26 @@ durch den Socket-Mount.
 
 ---
 
-## Härtungsmaßnahmen (Vergleich)
+## Container-spezifische Schwachstellen
 
-| Schwachstelle | Verwundbar | Gehärtet |
-|---|---|---|
-| Input-Validierung | keine (`shell=True`) | Regex-Whitelist, Liste als Argumente |
-| Template-Rendering | Nutzereingabe als Template | festes Template, Werte als Variablen |
-| Container-User | `root` | `appuser` (non-root) |
-| Privileged Mode | `privileged: true` | nicht gesetzt |
-| Linux Capabilities | alle | `cap_drop: ALL` |
-| Privilege Escalation | möglich | `no-new-privileges: true` |
-| Netzwerksegmentierung | webapp in frontend + backend | webapp nur in frontend |
-| Backend-Netz | erreichbar von außen | `internal: true` |
-| Filesystem | beschreibbar | `read_only: true` + `/tmp` als tmpfs |
-| Datenbankpasswort | `root` | starkes Zufallspasswort |
-| Docker Socket | gemountet | nicht exponiert |
-| Secrets | in Env-Vars und Image-Layern | (außerhalb des Scopes: Docker Secrets / Vault) |
+| Schwachstelle           | Verwundbar                     | Gehärtet                          |
+| ----------------------- | ------------------------------ | --------------------------------- |
+| Container-User          | root                           | appuser (non-root)                |
+| Privileged Mode         | privileged: true               | nicht gesetzt                     |
+| Linux Capabilities      | alle                           | cap_drop: ALL                     |
+| Privilege Escalation    | möglich                        | no-new-privileges: true           |
+| Netzwerksegmentierung   | webapp in frontend + backend   | webapp nur in frontend            |
+| Backend-Netz            | erreichbar von außen           | internal: true                    |
+| Filesystem              | beschreibbar                   | read_only: true + /tmp als tmpfs  |
+| Docker Socket           | gemountet                      | nicht exponiert                   |
+
+## Allgemeine Webschwachstellen (Türöffner für die Angriffskette)
+
+| Schwachstelle        | Verwundbar                  | Gehärtet                              |
+| -------------------- | --------------------------- | ------------------------------------- |
+| Input-Validierung    | keine (shell=True)          | Regex-Whitelist, Liste als Argumente  |
+| Template-Rendering   | Nutzereingabe als Template  | festes Template, Werte als Variablen  |
+
 
 ---
 
