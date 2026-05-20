@@ -13,6 +13,12 @@ services:
       - "5001:5000"
     privileged: true              # SCHWACHSTELLE 1: Privilegierter Modus
     # Kein "user:" -> läuft als root  # SCHWACHSTELLE 2: Root-User
+    environment:                  # SCHWACHSTELLE 5: Secrets in Umgebungsvariablen
+      DB_PASSWORD: root
+      SECRET_API_KEY: "sk-prod-a8f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5"
+      JWT_SECRET: "my-super-secret-jwt-signing-key-2024"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  # SCHWACHSTELLE 6: Docker Socket exponiert
     networks:
       - frontend
       - backend                    # SCHWACHSTELLE 3: Webapp hat Zugriff auf Backend-Netz

