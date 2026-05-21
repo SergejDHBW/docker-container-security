@@ -60,7 +60,7 @@ PING 8.8.8.8 (8.8.8.8): 56 data bytes
 
 ### 1.2 — Sind wir im Container?
 
-> ⚠️ **Hinweis:** Der Befehl `cat /proc/1/cgroup` zeigt auf Systemen mit cgroup v2 nur `0::/` statt eines Docker-Pfads. Der folgende Befehl funktioniert zuverlässig auf allen Systemen.
+> **Hinweis:** Der Befehl `cat /proc/1/cgroup` zeigt auf Systemen mit cgroup v2 nur `0::/` statt eines Docker-Pfads. Der folgende Befehl funktioniert zuverlässig auf allen Systemen.
 
 Im Ping-Feld eingeben:
 
