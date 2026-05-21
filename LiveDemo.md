@@ -313,7 +313,7 @@ JWT_SECRET=my-super-secret-jwt-signing-key-2024
 
 ---
 
-## PFLICHT — Härtung zeigen
+## Härtung
 
 **Was wird gezeigt:** Dieselben Angriffe schlagen in der gehärteten Version fehl.
 
@@ -323,20 +323,6 @@ JWT_SECRET=my-super-secret-jwt-signing-key-2024
 docker compose down
 docker compose -f docker-compose.hardened.yml up -d --build
 ```
-
-Warten bis alles läuft (ca. 15 Sekunden):
-
-```bash
-docker compose -f docker-compose.hardened.yml ps
-```
-
-Browser neu laden:
-
-```
-http://localhost:5001
-```
-
-Grünes Design mit Badge „GEHÄRTET" = korrekt. ✓
 
 ---
 
