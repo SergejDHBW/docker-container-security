@@ -55,7 +55,7 @@ Ein Terminal-Fenster offen lassen — wird für Schritt 3 und optional Schritt 5
 
 ---
 
-## PFLICHT — Angriff 1: Command Injection
+## Angriff 1: Command Injection
 
 **Was wird gezeigt:** Nutzereingabe wird ungefiltert als Shell-Befehl ausgeführt.
 
@@ -115,7 +115,7 @@ Wir sind in einem Container
 
 ---
 
-## PFLICHT — Angriff 2: Lateral Movement
+## Angriff 2: Lateral Movement
 
 **Was wird gezeigt:** Ein kompromittierter Container kann andere interne Dienste direkt ansprechen, weil keine Netzwerksegmentierung existiert.
 
@@ -165,7 +165,7 @@ id  vorname  nachname  email                        kreditkarte           kontos
 
 ---
 
-## PFLICHT — Angriff 3: Container Escape
+## Angriff 3: Container Escape
 
 **Was wird gezeigt:** Ein Container mit `privileged: true` kann das Host-Dateisystem einhängen und hat damit vollen Zugriff auf den Host.
 
@@ -244,53 +244,7 @@ buildkit  containers  image  network  overlay2  plugins  runtimes  swarm  tmp  v
 
 ---
 
----
-
-## OPTIONAL — Angriff 4: Server-Side Template Injection (SSTI)
-
-**Was wird gezeigt:** Nutzereingabe wird direkt als Jinja2-Template gerendert — Template-Ausdrücke werden serverseitig ausgewertet.
-
-### 4.1 — Normaler Berichts-Aufruf
-
-Im Browser aufrufen:
-
-```
-http://localhost:5001/report?title=Wochenbericht
-```
-
-Erwartete Ausgabe: Eine Seite mit der Überschrift „Wochenbericht".
-
----
-
-### 4.2 — Template-Expression einschleusen
-
-Im Browser aufrufen:
-
-```
-http://localhost:5001/report?title={{7*7}}
-```
-
-Erwartete Ausgabe: Die Überschrift zeigt **`49`** — nicht den eingegebenen Text.
-
-> 💬 *„Jinja2 hat den Ausdruck serverseitig ausgewertet. Das bedeutet: wir kontrollieren den Template-Engine des Servers."*
-
----
-
-### 4.3 — Flask-Konfiguration auslesen
-
-Im Browser aufrufen:
-
-```
-http://localhost:5001/report?title={{config}}
-```
-
-Erwartete Ausgabe: Die gesamte Flask-Konfiguration wird angezeigt, inklusive `SECRET_KEY`.
-
-> 💬 *„Mit dem Secret-Key können alle Session-Cookies der Anwendung gefälscht werden — jeder Nutzer kann imitiert werden. SSTI kann bis zu vollständiger Remote Code Execution eskalieren."*
-
----
-
-## OPTIONAL — Angriff 5: Secrets in Umgebungsvariablen
+## Angriff 4: Secrets in Umgebungsvariablen
 
 **Was wird gezeigt:** Passwörter und API-Keys in Env-Vars sind für jeden Prozess im Container lesbar.
 
