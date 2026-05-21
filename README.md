@@ -82,7 +82,7 @@ docker-container-security/
 ├── webapp/
 │   ├── Dockerfile                  ← Verwundbares Image (root, Tools, Layer-Secrets)
 │   ├── Dockerfile.hardened         ← Gehärtetes Image (non-root, minimal)
-│   ├── app.py                      ← Verwundbare Flask-App (Command Injection + SSTI)
+│   ├── app.py                      ← Verwundbare Flask-App (Command Injection)
 │   └── app_hardened.py             ← Gehärtete Flask-App
 └── admin-service/
     ├── Dockerfile
@@ -117,34 +117,7 @@ Weitere Beispiele:
 
 ---
 
-### 2. Server-Side Template Injection (SSTI)
-
-**Ursache:** Der `/report`-Endpoint baut die Nutzereingabe direkt als Zeichenkette in ein
-Jinja2-Template ein und rendert es anschließend. Jinja2-Ausdrücke in der Eingabe werden
-vom Template-Engine ausgewertet.
-
-**Angriff:** Im Browser aufrufen:
-
-```
-http://localhost:5001/report?title={{7*7}}
-```
-
-Ausgabe zeigt `49` statt des eingegebenen Textes — die Template-Expression wurde serverseitig
-ausgewertet. Weiterführend:
-
-```
-# Flask-Konfiguration mit Secret-Key auslesen:
-http://localhost:5001/report?title={{config}}
-
-# Remote Code Execution (Python-Subclass-Chain):
-http://localhost:5001/report?title={{''.__class__.__mro__[1].__subclasses__()}}
-```
-
-**Ort:** `webapp/app.py` → `/report`-Endpoint
-
----
-
-### 3. Lateral Movement
+### 2. Lateral Movement
 
 **Ursache:** Die Webapp ist gleichzeitig im `frontend`- und `backend`-Netz. Dadurch kann
 ein Angreifer, der die Webapp kompromittiert hat, alle internen Dienste über Docker-DNS
@@ -166,7 +139,7 @@ Ausgabe: AWS-Keys, Admin-Zugangsdaten, vollständige Kundendaten inkl. Kreditkar
 
 ---
 
-### 4. Container Escape (Privileged Mode)
+### 3. Container Escape (Privileged Mode)
 
 **Ursache:** Der Container läuft mit `privileged: true`. Das gibt dem Container uneingeschränkten
 Zugriff auf alle Linux-Kernel-Features des Hosts, einschließlich der Fähigkeit, Host-Devices
@@ -196,7 +169,7 @@ Ergebnis: Vollständiger Lesezugriff auf das Host-Dateisystem — der Container 
 
 ---
 
-### 5. Secrets in Umgebungsvariablen
+### 4. Secrets in Umgebungsvariablen
 
 **Ursache:** Passwörter und API-Keys werden als Environment-Variablen an den Container
 übergeben. Diese sind für jeden Prozess im Container über `/proc/1/environ` lesbar —
@@ -218,7 +191,7 @@ Ausgabe: `DB_PASSWORD=root`, `SECRET_API_KEY=sk-prod-...`, `JWT_SECRET=...`
 
 ---
 
-### 6. Secrets in Image-Layern (Docker History)
+### 5. Secrets in Image-Layern (Docker History)
 
 **Ursache:** Passwörter oder Zugangsdaten, die in einem `RUN`-Befehl im Dockerfile verwendet
 werden, bleiben in der Image-History gespeichert — auch wenn sie in einem späteren Layer
@@ -240,7 +213,7 @@ Ausgabe: `BACKUP_DB_URL=mysql://backup_user:Backup@2024!@db-prod.firma.local/kun
 
 ---
 
-### 7. Docker Socket Exposure
+### 6. Docker Socket Exposure
 
 **Ursache:** Die Datei `/var/run/docker.sock` ist in den Container eingebunden. Über diesen
 Unix-Socket spricht die Docker CLI mit dem Docker-Daemon. Zugriff darauf entspricht
@@ -274,26 +247,21 @@ durch den Socket-Mount.
 
 ---
 
-## Container-spezifische Schwachstellen
+## Härtungsmaßnahmen (Vergleich)
 
-| Schwachstelle           | Verwundbar                     | Gehärtet                          |
-| ----------------------- | ------------------------------ | --------------------------------- |
-| Container-User          | root                           | appuser (non-root)                |
-| Privileged Mode         | privileged: true               | nicht gesetzt                     |
-| Linux Capabilities      | alle                           | cap_drop: ALL                     |
-| Privilege Escalation    | möglich                        | no-new-privileges: true           |
-| Netzwerksegmentierung   | webapp in frontend + backend   | webapp nur in frontend            |
-| Backend-Netz            | erreichbar von außen           | internal: true                    |
-| Filesystem              | beschreibbar                   | read_only: true + /tmp als tmpfs  |
-| Docker Socket           | gemountet                      | nicht exponiert                   |
-
-## Allgemeine Webschwachstellen (Türöffner für die Angriffskette)
-
-| Schwachstelle        | Verwundbar                  | Gehärtet                              |
-| -------------------- | --------------------------- | ------------------------------------- |
-| Input-Validierung    | keine (shell=True)          | Regex-Whitelist, Liste als Argumente  |
-| Template-Rendering   | Nutzereingabe als Template  | festes Template, Werte als Variablen  |
-
+| Schwachstelle | Verwundbar | Gehärtet |
+|---|---|---|
+| Input-Validierung | keine (`shell=True`) | Regex-Whitelist, Liste als Argumente |
+| Container-User | `root` | `appuser` (non-root) |
+| Privileged Mode | `privileged: true` | nicht gesetzt |
+| Linux Capabilities | alle | `cap_drop: ALL` |
+| Privilege Escalation | möglich | `no-new-privileges: true` |
+| Netzwerksegmentierung | webapp in frontend + backend | webapp nur in frontend |
+| Backend-Netz | erreichbar von außen | `internal: true` |
+| Filesystem | beschreibbar | `read_only: true` + `/tmp` als tmpfs |
+| Datenbankpasswort | `root` | starkes Zufallspasswort |
+| Docker Socket | gemountet | nicht exponiert |
+| Secrets | in Env-Vars und Image-Layern | (außerhalb des Scopes: Docker Secrets / Vault) |
 
 ---
 
@@ -303,4 +271,3 @@ durch den Socket-Mount.
 - **Port 5001 belegt?** → In `docker-compose.yml` den Port ändern (z.B. `5002:5000`)
 - **Container Escape klappt nicht?** → `; lsblk` zeigt den richtigen Device-Namen. Unter Docker Desktop ist der Escape auf die interne VM beschränkt
 - **Docker Socket nicht erreichbar?** → `ls -la /var/run/docker.sock` im Container prüfen; Socket muss existieren und lesbar sein
-- **SSTI zeigt keinen Effekt?** → URL korrekt enkodieren: `{{7*7}}` → `%7B%7B7*7%7D%7D`

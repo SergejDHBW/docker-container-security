@@ -17,6 +17,8 @@ services:
     # HÄRTUNG 3: Capabilities einschränken
     cap_drop:
       - ALL
+    cap_add:
+      - NET_RAW              # Benötigt für ping (ICMP Raw Sockets)
     security_opt:
       - no-new-privileges:true
     # HÄRTUNG 4: Read-only Dateisystem

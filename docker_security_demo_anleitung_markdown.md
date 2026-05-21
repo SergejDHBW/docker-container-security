@@ -10,12 +10,11 @@
 | 1 | Command Injection | ~2 Min | **PFLICHT** |
 | 2 | Lateral Movement | ~2 Min | **PFLICHT** |
 | 3 | Container Escape | ~2 Min | **PFLICHT** |
-| 4 | SSTI | ~2 Min | optional |
-| 5 | Secrets in Env-Vars | ~1 Min | optional |
+| 4 | Secrets in Env-Vars | ~1 Min | optional |
 | — | Härtung zeigen | ~2 Min | **PFLICHT** |
 
 **Pflicht-Demo:** ca. 8 Minuten  
-**Mit beiden Optionals:** ca. 11 Minuten
+**Mit Optional:** ca. 9 Minuten
 
 ---
 
@@ -253,57 +252,11 @@ Im Ping-Feld eingeben:
 
 ---
 
----
-
-## OPTIONAL — Angriff 4: Server-Side Template Injection (SSTI)
-
-**Was wird gezeigt:** Nutzereingabe wird direkt als Jinja2-Template gerendert — Template-Ausdrücke werden serverseitig ausgewertet.
-
-### 4.1 — Normaler Berichts-Aufruf
-
-Im Browser aufrufen:
-
-```
-http://localhost:5001/report?title=Wochenbericht
-```
-
-Erwartete Ausgabe: Eine Seite mit der Überschrift „Wochenbericht".
-
----
-
-### 4.2 — Template-Expression einschleusen
-
-Im Browser aufrufen:
-
-```
-http://localhost:5001/report?title={{7*7}}
-```
-
-Erwartete Ausgabe: Die Überschrift zeigt **`49`** — nicht den eingegebenen Text.
-
-> 💬 *„Jinja2 hat den Ausdruck serverseitig ausgewertet. Das bedeutet: wir kontrollieren den Template-Engine des Servers."*
-
----
-
-### 4.3 — Flask-Konfiguration auslesen
-
-Im Browser aufrufen:
-
-```
-http://localhost:5001/report?title={{config}}
-```
-
-Erwartete Ausgabe: Die gesamte Flask-Konfiguration wird angezeigt, inklusive `SECRET_KEY`.
-
-> 💬 *„Mit dem Secret-Key können alle Session-Cookies der Anwendung gefälscht werden — jeder Nutzer kann imitiert werden. SSTI kann bis zu vollständiger Remote Code Execution eskalieren."*
-
----
-
-## OPTIONAL — Angriff 5: Secrets in Umgebungsvariablen
+## OPTIONAL — Angriff 4: Secrets in Umgebungsvariablen
 
 **Was wird gezeigt:** Passwörter und API-Keys in Env-Vars sind für jeden Prozess im Container lesbar.
 
-### Im Ping-Feld eingeben:
+### 4.1 — Im Ping-Feld eingeben:
 
 ```
 ; cat /proc/1/environ | tr '\0' '\n'
@@ -419,6 +372,5 @@ docker compose -f docker-compose.hardened.yml down
 | MySQL antwortet nicht | Nochmal 30 Sek warten, dann `; mysql ...` erneut |
 | `fdisk -l` zeigt nichts | Unter Docker Desktop normal — `lsblk` versuchen |
 | Device-Name unbekannt | `; lsblk` ausführen und den richtigen Namen ablesen |
-| SSTI zeigt `{{7*7}}` als Text | URL direkt in Adressleiste eingeben, nicht über Formular |
 | Port 5001 nicht erreichbar | `docker compose ps` — läuft webapp? Sonst `docker compose logs webapp` |
 | Gehärtete Version startet nicht | `docker compose down` sicherstellen, dann erneut `up` |

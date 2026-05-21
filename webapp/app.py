@@ -1,7 +1,6 @@
 from flask import Flask, request, render_template_string
 import os
 import subprocess
-from datetime import datetime
 
 app = Flask(__name__)
 
@@ -39,13 +38,6 @@ HTML_TEMPLATE = """
                 <button type="submit">Ping ausführen</button>
             </form>
         </div>
-        <div class="card">
-            <h2>Berichts-Generator</h2>
-            <p>Erstellen Sie einen personalisierten Systembericht.</p>
-            <input id="reportTitle" type="text" placeholder="Berichtstitel eingeben, z.B. Wochenbericht KW20">
-            <br>
-            <a class="btn" href="#" onclick="window.location.href='/report?title='+encodeURIComponent(document.getElementById('reportTitle').value);return false;">Bericht erstellen</a>
-        </div>
         {% if output %}
         <div class="card">
             <h2>Ergebnis</h2>
@@ -74,23 +66,6 @@ def ping():
     )
     output = result.stdout + result.stderr
     return render_template_string(HTML_TEMPLATE, output=output, host_value=host)
-
-@app.route("/report")
-def report():
-    # VULNERABLE: User input is directly embedded into a Jinja2 template string → SSTI
-    # Payload: {{7*7}}, {{config}}, or full RCE via __subclasses__()
-    title = request.args.get("title", "Systembericht")
-    template = (
-        "<!DOCTYPE html><html><head><title>Bericht</title>"
-        "<style>body{font-family:sans-serif;padding:40px;background:#f0f2f5;}"
-        ".card{background:white;padding:30px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.1);}"
-        "a{color:#1a237e;}</style></head><body><div class='card'>"
-        "<h1>" + title + "</h1>"
-        "<p>Generiert am: {{ now }}</p>"
-        "<hr><p><a href='/'>&#8592; Zurück zum Portal</a></p>"
-        "</div></body></html>"
-    )
-    return render_template_string(template, now=datetime.now().strftime("%d.%m.%Y %H:%M"))
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)

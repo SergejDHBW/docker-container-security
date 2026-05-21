@@ -32,26 +32,7 @@ docker compose up -d --build
 
 
 # ============================================
-#  SCHWACHSTELLE 2: Server-Side Template Injection (SSTI)
-# ============================================
-
-# Im Browser aufrufen:
-#   http://localhost:5001/report?title=Hallo
-#   → normales Ergebnis
-
-# Template-Expression einschleusen:
-#   http://localhost:5001/report?title={{7*7}}
-#   → Ausgabe: 49 (Jinja2 hat den Ausdruck ausgewertet)
-
-# Flask-Konfiguration mit Secret-Key auslesen:
-#   http://localhost:5001/report?title={{config}}
-
-# Python-Objekt-Hierarchie für RCE:
-#   http://localhost:5001/report?title={{''.__class__.__mro__[1].__subclasses__()}}
-
-
-# ============================================
-#  SCHWACHSTELLE 3: Lateral Movement
+#  SCHWACHSTELLE 2: Lateral Movement
 # ============================================
 
 # Netzwerk erkunden:
@@ -70,7 +51,7 @@ docker compose up -d --build
 
 
 # ============================================
-#  SCHWACHSTELLE 4: Container Escape (Privileged Mode)
+#  SCHWACHSTELLE 3: Container Escape (Privileged Mode)
 # ============================================
 
 # Prüfen ob privilegiert:
@@ -90,7 +71,7 @@ docker compose up -d --build
 
 
 # ============================================
-#  SCHWACHSTELLE 5: Secrets in Umgebungsvariablen
+#  SCHWACHSTELLE 4: Secrets in Umgebungsvariablen
 # ============================================
 
 # Alle Env-Vars des Prozesses auslesen:
@@ -102,7 +83,7 @@ docker inspect $(docker compose ps -q webapp) | python3 -m json.tool | grep -A 1
 
 
 # ============================================
-#  SCHWACHSTELLE 6: Secrets in Image-Layern
+#  SCHWACHSTELLE 5: Secrets in Image-Layern
 # ============================================
 
 # Von der Docker-Host-Shell – Image-History mit vollständigen Befehlen:
@@ -115,7 +96,7 @@ docker history --no-trunc $(docker compose images -q webapp)
 
 
 # ============================================
-#  SCHWACHSTELLE 7: Docker Socket Exposure
+#  SCHWACHSTELLE 6: Docker Socket Exposure
 # ============================================
 
 # Docker-Socket vorhanden?
@@ -155,9 +136,6 @@ sleep 15
 # Command Injection versuchen → blockiert:
 #   Eingabe: 8.8.8.8; whoami
 #   → "Ungültige Eingabe!"
-
-# SSTI versuchen:
-#   http://localhost:5001/report → Endpunkt existiert nicht (entfernt)
 
 # Container betreten und Rechte prüfen:
 docker compose -f docker-compose.hardened.yml exec webapp sh

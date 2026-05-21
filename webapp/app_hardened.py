@@ -75,13 +75,16 @@ def ping():
             host_value=host)
 
     # HÄRTUNG: Kein shell=True, Argumente als Liste
-    result = subprocess.run(
-        ["ping", "-c", "2", host],
-        capture_output=True,
-        text=True,
-        timeout=10
-    )
-    output = result.stdout + result.stderr
+    try:
+        result = subprocess.run(
+            ["ping", "-c", "2", host],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        output = result.stdout + result.stderr
+    except (subprocess.TimeoutExpired, OSError) as e:
+        output = f"Fehler: {e}"
     return render_template_string(HTML_TEMPLATE, output=output, error=None, host_value=host)
 
 if __name__ == "__main__":
