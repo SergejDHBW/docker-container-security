@@ -4,26 +4,12 @@
 
 ## Schritt 0 — Setup (vor dem Start, nicht live)
 
-### Im Terminal ausführen
+### Container starten
 
 ```bash
 cd docker-container-security
 docker compose up -d --build
 ```
-
-### Warten bis MySQL bereit ist
-
-```bash
-docker compose logs db --follow
-```
-
-Warten bis diese Zeile erscheint, dann `Ctrl+C`:
-
-```
-db  | /usr/sbin/mysqld: ready for connections
-```
-
-Alternativ einfach 60 Sekunden warten.
 
 ### Prüfen ob alles läuft
 
@@ -46,12 +32,7 @@ admin     running
 http://localhost:5001
 ```
 
-Die Seite muss laden und ein Formular mit einem Ping-Feld zeigen.
-Blaues Design = verwundbare Version. ✓
-
 ### Terminal für die Demo bereithalten
-
-Ein Terminal-Fenster offen lassen — wird für Schritt 3 und optional Schritt 5 gebraucht.
 
 ---
 
@@ -59,7 +40,7 @@ Ein Terminal-Fenster offen lassen — wird für Schritt 3 und optional Schritt 5
 
 **Was wird gezeigt:** Nutzereingabe wird ungefiltert als Shell-Befehl ausgeführt.
 
-### 1.1 — Normaler Ping (zeigen dass das Tool "legitim" ist)
+### 1.1 — Normaler Ping
 
 Im Browser im Ping-Feld eingeben:
 
@@ -67,16 +48,11 @@ Im Browser im Ping-Feld eingeben:
 8.8.8.8
 ```
 
-Auf **„Ping ausführen"** klicken.
-
 Erwartete Ausgabe:
 ```
 PING 8.8.8.8 (8.8.8.8): 56 data bytes
 64 bytes from 8.8.8.8: ...
 ```
-
-> 💬 *„Das ist ein normales Diagnose-Tool im Kundenportal — sieht harmlos aus."*
-
 ---
 
 ### 1.2 — Command Injection: Wer bin ich?
