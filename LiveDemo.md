@@ -2,23 +2,6 @@
 
 ---
 
-## Übersicht
-
-| Schritt | Angriff | Zeit | Typ |
-|---|---|---|---|
-| 0 | Setup & Vorbereitung | ~2 Min | — |
-| 1 | Command Injection | ~2 Min | **PFLICHT** |
-| 2 | Lateral Movement | ~2 Min | **PFLICHT** |
-| 3 | Container Escape | ~2 Min | **PFLICHT** |
-| 4 | SSTI | ~2 Min | optional |
-| 5 | Secrets in Env-Vars | ~1 Min | optional |
-| — | Härtung zeigen | ~2 Min | **PFLICHT** |
-
-**Pflicht-Demo:** ca. 8 Minuten
-**Mit beiden Optionals:** ca. 11 Minuten
-
----
-
 ## Schritt 0 — Setup (vor dem Start, nicht live)
 
 ### Im Terminal ausführen
