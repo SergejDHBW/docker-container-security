@@ -55,24 +55,7 @@ PING 8.8.8.8 (8.8.8.8): 56 data bytes
 ```
 ---
 
-### 1.2 — Command Injection: Wer bin ich?
-
-Im Ping-Feld eingeben:
-
-```
-8.8.8.8; whoami
-```
-
-Erwartete Ausgabe (ganz unten im Ergebnis):
-```
-root
-```
-
-> 💬 *„Das Semikolon beendet den Ping-Befehl und startet einen neuen. Die App übergibt die Eingabe ungefiltert an die Shell — wir führen jetzt beliebige Befehle als Root aus."*
-
----
-
-### 1.3 — Sind wir im Container?
+### 1.2 — Sind wir im Container?
 
 > ⚠️ **Geändert:** Der ursprüngliche Befehl `cat /proc/1/cgroup` zeigt auf Systemen mit cgroup v2 nur `0::/` statt eines Docker-Pfads. Der folgende Befehl funktioniert zuverlässig auf allen Systemen.
 
@@ -88,6 +71,22 @@ Wir sind in einem Container
 ```
 
 > 💬 *„Die Datei /.dockerenv existiert nur innerhalb von Docker-Containern. Damit ist bewiesen: wir befinden uns in einem Container. Jetzt schauen wir was wir von hier aus noch erreichen können."*
+---
+
+### 1.3 — Command Injection: Wer bin ich?
+
+Im Ping-Feld eingeben:
+
+```
+8.8.8.8; whoami
+```
+
+Erwartete Ausgabe (ganz unten im Ergebnis):
+```
+root
+```
+
+> 💬 *„Das Semikolon beendet den Ping-Befehl und startet einen neuen. Die App übergibt die Eingabe ungefiltert an die Shell — wir führen jetzt beliebige Befehle als Root aus."*
 
 ---
 
