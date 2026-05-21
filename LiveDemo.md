@@ -94,20 +94,6 @@ root
 
 ---
 
-### 1.4 — Quellcode der Anwendung lesen
-
-Im Ping-Feld eingeben:
-
-```
-8.8.8.8; ls /app/
-```
-
-Erwartete Ausgabe: Dateien der Webanwendung (z.B. `app.py`, `templates/`, `requirements.txt`).
-
-> *„Der Angreifer kann den kompletten Quellcode lesen. Dort finden sich oft hartcodierte Passwörter, API-Endpunkte und die Datenbankstruktur. Aber es gibt einen noch schnelleren Weg — die Umgebungsvariablen."*
-
----
-
 ## Angriff 2: Lateral Movement
 
 **Was wird gezeigt:** Ein kompromittierter Container kann andere interne Dienste direkt ansprechen, weil keine Netzwerksegmentierung existiert.
